@@ -1,6 +1,8 @@
 import { Buffer } from 'node:buffer'
 import { NextRequest, NextResponse } from 'next/server'
+import { classifyPassword } from '@/lib/access-tier'
 import { PALWORLD_PROXY_HEADERS } from '@/lib/palworld'
+import type { AccessTier } from '@/lib/types'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -13,7 +15,24 @@ interface ProxyServerConfig {
   serverIp: string
   serverPort: number
   adminPassword: string
+  tier: AccessTier
 }
+
+// ─── SECURITY BOUNDARY: MOD-tier endpoint allowlist ─────────────────────────
+// A mod-tier request may ONLY reach the endpoints below. Enforcement is
+// method-aware, runs against the full decoded upstream path, and happens
+// BEFORE any upstream contact — a mod-tier session hitting POST /shutdown
+// from devtools gets a 403 right here. This allowlist (not UI hiding) is the
+// security boundary. Admin tier and directly-entered real-admin-password
+// requests are never filtered.
+const MOD_TIER_ALLOWLIST: ReadonlySet<string> = new Set([
+  'GET players', // roster for the widget
+  'GET info', // server name + connect validation
+  'GET metrics', // player count
+  'POST kick',
+  'POST ban',
+  'POST unban',
+])
 
 function parsePort(value: string) {
   if (!/^\d+$/.test(value)) {
@@ -68,13 +87,30 @@ function getServerConfig(request: NextRequest) {
     ''
   const serverPort = parsePort(serverPortRaw.trim())
 
-  // perlica shim (2026-07-10): panel login password is PANEL_LOGIN_PASSWORD;
-  // the real game admin credential (PALWORLD_REAL_ADMIN_PASSWORD) never leaves
-  // the server side. Real credential entered directly still passes through.
-  const panelLogin = process.env.PANEL_LOGIN_PASSWORD
+  // perlica shim (2026-07-10): the browser never holds the real game admin
+  // credential. Panel passwords are swapped server-side:
+  //   PANEL_LOGIN_PASSWORD → real credential upstream, ADMIN tier (full access)
+  //   MOD_PASSWORD         → real credential upstream, MOD tier (allowlist-enforced)
+  //   real credential      → passes through unchanged, ADMIN tier
+  //   anything else        → passes through unchanged, upstream rejects it (401)
+  // The tier is re-derived from the presented password on EVERY request; no
+  // client-supplied field can influence it.
   const realAdmin = process.env.PALWORLD_REAL_ADMIN_PASSWORD
-  const effectivePassword =
-    panelLogin && realAdmin && adminPassword === panelLogin ? realAdmin : adminPassword
+  const passwordClass = classifyPassword(adminPassword)
+
+  let tier: AccessTier = 'admin'
+  let effectivePassword = adminPassword
+
+  if (passwordClass === 'mod') {
+    // Mod tier holds even if the real credential is missing from the env —
+    // the request then fails upstream auth instead of gaining broader access.
+    tier = 'mod'
+    if (realAdmin) {
+      effectivePassword = realAdmin
+    }
+  } else if (passwordClass === 'panel-admin' && realAdmin) {
+    effectivePassword = realAdmin
+  }
 
   if (!serverIp.trim() || serverPort == null || !adminPassword) {
     return null
@@ -84,6 +120,7 @@ function getServerConfig(request: NextRequest) {
     serverIp: serverIp.trim(),
     serverPort,
     adminPassword: effectivePassword,
+    tier,
   } satisfies ProxyServerConfig
 }
 
@@ -127,6 +164,22 @@ async function proxyPalworldRequest(request: NextRequest, { params }: RouteConte
   }
 
   const { path } = await params
+
+  // MOD-tier enforcement: exact match of "<METHOD> <decoded path>" against the
+  // allowlist, checked before anything is forwarded upstream. Path segments
+  // arrive URL-decoded from Next, so traversal and encoded-slash tricks
+  // ("players/../shutdown", "players%2F..%2Fshutdown") produce keys that
+  // simply do not match and are rejected. Case-sensitive by design: fail
+  // closed on anything that is not an exact allowlisted endpoint.
+  const decodedPath = path.join('/')
+
+  if (serverConfig.tier === 'mod' && !MOD_TIER_ALLOWLIST.has(`${method} ${decodedPath}`)) {
+    return NextResponse.json(
+      { error: `Forbidden: "${method} /${decodedPath}" is not available to the mod tier` },
+      { status: 403 }
+    )
+  }
+
   const upstreamPath = path.map((segment) => encodeURIComponent(segment)).join('/')
   const upstreamUrl = new URL(`/v1/api/${upstreamPath}`, upstreamBaseUrl)
   const body = method === 'POST' ? await getUpstreamRequestBody(request) : undefined

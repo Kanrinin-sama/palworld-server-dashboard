@@ -68,6 +68,9 @@ function normalizeServerConfig(config: StoredServerConfig | ServerConfig | null)
     restApiPort: String(config.restApiPort ?? '').trim(),
     gamePort: String(config.gamePort ?? DEFAULT_GAME_PORT).trim() || DEFAULT_GAME_PORT,
     adminPassword: String(config.adminPassword ?? ''),
+    // View selection only — the proxy re-derives the tier from the password
+    // on every request, so a tampered stored tier gains nothing server-side.
+    accessTier: config.accessTier === 'mod' ? 'mod' : 'admin',
   }
 }
 
@@ -406,10 +409,17 @@ export function ServerProvider({ children }: { children: ReactNode }) {
       return
     }
 
+    // MOD tier never requests settings — the proxy allowlist would 403 it.
+    // info and metrics are mod-allowlisted (widget header + player count).
+    const isModTier = config.accessTier === 'mod'
+    const settingsPromise: Promise<Record<string, unknown> | null> = isModTier
+      ? Promise.resolve(null)
+      : apiCall<Record<string, unknown>>('settings')
+
     const results = await Promise.allSettled([
       apiCall<ServerInfo>('info'),
       apiCall<ServerMetrics>('metrics'),
-      apiCall<Record<string, unknown>>('settings'),
+      settingsPromise,
     ])
 
     const [infoResult, metricsResult, settingsResult] = results
@@ -426,7 +436,9 @@ export function ServerProvider({ children }: { children: ReactNode }) {
       console.warn('Failed to fetch metrics:', metricsResult.reason)
     }
 
-    if (settingsResult.status === 'fulfilled') {
+    if (isModTier) {
+      // No settings state for the mod widget.
+    } else if (settingsResult.status === 'fulfilled') {
       setSettings(settingsResult.value)
     } else {
       console.warn('Failed to fetch settings:', settingsResult.reason)

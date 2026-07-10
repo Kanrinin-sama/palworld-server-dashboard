@@ -11,7 +11,7 @@ import { LOGIN_TRANSITION_SESSION_KEY } from '@/lib/session-keys'
 import { InfoPanel, StatusBar } from '@/components/status-bar'
 import { Terminal } from '@/components/terminal'
 import { ServerIcon, KeyIcon, NetworkIcon, Loader2Icon, CheckCircle2Icon, XCircleIcon } from 'lucide-react'
-import type { ServerConfig } from '@/lib/types'
+import type { AccessTier, ServerConfig } from '@/lib/types'
 
 const SERVER_CONFIG_STORAGE_KEY = 'serverConfig'
 const VALIDATION_DEBOUNCE_MS = 500
@@ -108,6 +108,28 @@ async function validateServerConnection(config: LoginConfigPayload, signal?: Abo
 
   if (!infoResponse.ok) {
     throw new Error(await getApiErrorMessage(infoResponse, 'Failed to connect to server'))
+  }
+}
+
+// Resolve the panel access tier for the entered password. Passwords are only
+// compared server-side; the response carries the tier and nothing else.
+async function fetchAccessTier(password: string): Promise<AccessTier | 'invalid'> {
+  try {
+    const response = await fetch('/api/auth-tier', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+      cache: 'no-store',
+    })
+
+    if (!response.ok) {
+      return 'invalid'
+    }
+
+    const data = (await response.json()) as { tier?: unknown }
+    return data.tier === 'admin' || data.tier === 'mod' ? data.tier : 'invalid'
+  } catch {
+    return 'invalid'
   }
 }
 
@@ -271,8 +293,15 @@ export function LoginForm() {
     try {
       await validateServerConnection(normalizedConfig)
 
+      // validateServerConnection succeeded, so the password is live. Resolve
+      // which tier it authenticated as; 'invalid' at this point means a
+      // directly-entered real game credential the panel env does not list —
+      // that keeps full admin access (passthrough), same as before.
+      const tierResult = await fetchAccessTier(normalizedConfig.adminPassword)
+      const accessTier: AccessTier = tierResult === 'mod' ? 'mod' : 'admin'
+
       sessionStorage.setItem(LOGIN_TRANSITION_SESSION_KEY, '1')
-      setConfig(normalizedConfig, { rememberMe })
+      setConfig({ ...normalizedConfig, accessTier }, { rememberMe })
     } catch (err) {
       const rawMessage = err instanceof Error ? err.message : 'Unknown error'
       const message = toFriendlyValidationMessage(rawMessage, normalizedConfig)
