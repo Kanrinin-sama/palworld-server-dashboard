@@ -17,8 +17,8 @@ import { useServer } from '@/lib/server-context'
 import type { Player } from '@/lib/types'
 import points from '@/lib/map-points.json'
 
-const LANDSCAPE = [447900, 810900, -1151900, -788900] as const // 1.0 canvas ~11% larger; measured fit ±2%, exact bounds via pak DT_WorldMapUI = phase 2
-const MAP_IMAGE_URL = '/palworld-map/full-map-1.0-8192.avif' // 1.0 map w/ Sunreach, paldb map8 z4 stitch, AVIF 2x2 grid (2026-07-10)
+const LANDSCAPE = [349400, 724400, -1099400, -724400] as const // DT-exact: DT_WorldMapUIData MainMap landScapeRealPositionMax/Min (pak v1.0) — pairs ONLY with the pak-native T_WorldMap image below
+const MAP_IMAGE_URL = '/palworld-map/full-map-native-8192.avif' // pak-native T_WorldMap 8192x8192 (DXT1→PNG→AVIF 2x2 grid, 2026-07-10) — corner-to-corner match to the DT-exact LANDSCAPE above; paldb stitch kept as fallback asset
 const MIN_ZOOM = 0
 const MAX_ZOOM = 10
 const MAP_SIZE_FALLBACK = 920
