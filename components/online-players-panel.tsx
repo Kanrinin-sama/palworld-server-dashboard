@@ -272,9 +272,9 @@ export function OnlinePlayersPanel() {
                 return (
                 <div
                   key={getPlayerKey(player)}
-                  className={`flex items-center justify-between p-2 rounded-lg hover:bg-secondary/50 transition-colors group ${isBanned ? 'border border-destructive/30 bg-destructive/5' : ''}`}
+                  className={`flex items-center gap-2 p-2 rounded-lg hover:bg-secondary/50 transition-colors group ${isBanned ? 'border border-destructive/30 bg-destructive/5' : ''}`}
                 >
-                  <div className="flex items-center gap-3 min-w-0">
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
                     <div
                       className={`avatar-circle w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 border border-white/20 ${isBanned ? 'ring-1 ring-destructive/60' : ''}`}
                       style={{ backgroundColor: avatarColor }}
@@ -293,11 +293,12 @@ export function OnlinePlayersPanel() {
                         {player.accountName && player.accountName !== player.name && (
                           <><span className="mx-0.5">·</span><span className="truncate max-w-20">{player.accountName}</span></>
                         )}
-                        <span className="mx-0.5">|</span>
-                        <WifiIcon className={`w-3 h-3 ${getPingColor(Math.floor(player.ping ?? 0))}`} />
-                        <span className={getPingColor(Math.floor(player.ping ?? 0))}>{Math.floor(player.ping ?? 0)}ms</span>
                       </p>
                     </div>
+                  </div>
+                  <div className="flex w-16 shrink-0 items-center justify-end gap-1 font-mono text-xs tabular-nums">
+                    <WifiIcon className={`h-3 w-3 shrink-0 ${getPingColor(Math.floor(player.ping ?? 0))}`} />
+                    <span className={getPingColor(Math.floor(player.ping ?? 0))}>{Math.floor(player.ping ?? 0)}ms</span>
                   </div>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
