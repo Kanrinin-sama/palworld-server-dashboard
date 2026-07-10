@@ -98,8 +98,8 @@ interface LiveMapProps {
 
 export function LiveMap({ activeTab = 'map', onTabChange }: LiveMapProps) {
   const { config, connectionStatus, players, setPlayers } = useServer()
-  const [zoom, setZoom] = useState(0)
-  const [pan, setPan] = useState({ x: 0, y: 0 })
+  // gmaps-style view: top-left-origin transform, cursor-anchored wheel zoom, edge-clamped pan (owner spec 2026-07-10)
+  const [view, setView] = useState<{ scale: number; tx: number; ty: number } | null>(null)
   const [mousePosition, setMousePosition] = useState<[string, string]>(['0.00', '0.00'])
   // Layer toggles persist across reloads (owner order 2026-07-10)
   const readLayer = (key: string, fallback: boolean) => {
@@ -130,8 +130,28 @@ export function LiveMap({ activeTab = 'map', onTabChange }: LiveMapProps) {
   const mapViewportRef = useRef<HTMLDivElement | null>(null)
   const nextAutoRefreshAtRef = useRef<number | null>(null)
 
-  // Fit basis = limiting dimension of the full-viewport container, so zoom 0 shows the whole map.
-  const scale = (Math.min(mapSize.width, mapSize.height) / MAP_BASIS) * (1 + zoom * 0.9) // fit at zoom 0 → ~1.1x native at max
+  const fitScale = Math.min(mapSize.width, mapSize.height) / MAP_BASIS
+  const scale = view?.scale ?? fitScale
+  const zoom = Math.max(0, (scale / fitScale - 1) / 0.9) // derived from scale: keeps grouping/fanout semantics
+  const clampView = useCallback((v: { scale: number; tx: number; ty: number }, vw: number, vh: number) => {
+    const w = MAP_BASIS * v.scale
+    const h = MAP_BASIS * v.scale
+    return {
+      scale: v.scale,
+      tx: w <= vw ? (vw - w) / 2 : clamp(v.tx, vw - w, 0),
+      ty: h <= vh ? (vh - h) / 2 : clamp(v.ty, vh - h, 0),
+    }
+  }, [])
+
+  // Initialize on first measure; re-clamp (and keep whole-map minimum) on viewport resize.
+  useEffect(() => {
+    setView((cur) => {
+      const fit = Math.min(mapSize.width, mapSize.height) / MAP_BASIS
+      if (!Number.isFinite(fit) || fit <= 0) return cur
+      if (!cur) return clampView({ scale: fit, tx: 0, ty: 0 }, mapSize.width, mapSize.height)
+      return clampView({ ...cur, scale: Math.max(cur.scale, fit) }, mapSize.width, mapSize.height)
+    })
+  }, [mapSize.width, mapSize.height, clampView])
   const mappablePlayers = useMemo(
     () => players.filter((player) => player.location_x !== 0 || player.location_y !== 0),
     [players]
@@ -264,10 +284,20 @@ export function LiveMap({ activeTab = 'map', onTabChange }: LiveMapProps) {
         return
       }
 
-      setPan({
-        x: start.panX + (event.clientX - start.x),
-        y: start.panY + (event.clientY - start.y),
-      })
+      const rect = mapViewportRef.current?.getBoundingClientRect()
+      setView((cur) =>
+        cur && rect
+          ? clampView(
+              {
+                scale: cur.scale,
+                tx: start.panX + (event.clientX - start.x),
+                ty: start.panY + (event.clientY - start.y),
+              },
+              rect.width,
+              rect.height,
+            )
+          : cur,
+      )
     }
 
     const handleMouseUp = () => {
@@ -282,7 +312,7 @@ export function LiveMap({ activeTab = 'map', onTabChange }: LiveMapProps) {
       window.removeEventListener('mousemove', handleMouseMove)
       window.removeEventListener('mouseup', handleMouseUp)
     }
-  }, [isDragging])
+  }, [isDragging, clampView])
 
   const handleMapMouseMove = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     const planeRect = mapPlaneRef.current?.getBoundingClientRect()
@@ -301,9 +331,19 @@ export function LiveMap({ activeTab = 'map', onTabChange }: LiveMapProps) {
 
   const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
     event.preventDefault()
-
-    setZoom((current) => clamp(current + (event.deltaY < 0 ? 1 : -1), MIN_ZOOM, MAX_ZOOM))
-  }, [])
+    const rect = mapViewportRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const cx = event.clientX - rect.left
+    const cy = event.clientY - rect.top
+    setView((cur) => {
+      const fit = Math.min(rect.width, rect.height) / MAP_BASIS
+      const base = cur ?? { scale: fit, tx: (rect.width - MAP_BASIS * fit) / 2, ty: (rect.height - MAP_BASIS * fit) / 2 }
+      const nextScale = clamp(base.scale * (event.deltaY < 0 ? 1.25 : 0.8), fit, 1.2)
+      const k = nextScale / base.scale
+      // anchor the point under the cursor: it must map to the same viewport position after scaling
+      return clampView({ scale: nextScale, tx: cx - (cx - base.tx) * k, ty: cy - (cy - base.ty) * k }, rect.width, rect.height)
+    })
+  }, [clampView])
 
   const handleMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     if (event.button !== 0) {
@@ -314,11 +354,11 @@ export function LiveMap({ activeTab = 'map', onTabChange }: LiveMapProps) {
     dragStartRef.current = {
       x: event.clientX,
       y: event.clientY,
-      panX: pan.x,
-      panY: pan.y,
+      panX: view?.tx ?? 0,
+      panY: view?.ty ?? 0,
     }
     setIsDragging(true)
-  }, [pan.x, pan.y])
+  }, [view?.tx, view?.ty])
 
   const playerGroups = useMemo(() => {
     if (mappablePlayers.length === 0) {
@@ -505,12 +545,12 @@ export function LiveMap({ activeTab = 'map', onTabChange }: LiveMapProps) {
       >
         <div
           ref={mapPlaneRef}
-          className="absolute left-1/2 top-1/2 will-change-transform"
+          className="absolute left-0 top-0 will-change-transform"
           style={{
             width: `${MAP_BASIS}px`,
             height: `${MAP_BASIS}px`,
-            transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
-            transformOrigin: 'center center',
+            transform: `translate(${view?.tx ?? 0}px, ${view?.ty ?? 0}px) scale(${scale})`,
+            transformOrigin: '0 0',
           }}
         >
           <img
