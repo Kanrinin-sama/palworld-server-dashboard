@@ -16,9 +16,9 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'Palworld Server Dashboard',
-  description: 'Browser-based dashboard for Palworld server monitoring, moderation, and live operations.',
-  applicationName: 'Palworld Server Dashboard',
+  title: 'kanapals',
+  description: 'kanapals server dashboard — monitoring, moderation, and live ops.',
+  applicationName: 'kanapals',
   icons: {
     icon: [
       {
@@ -30,7 +30,7 @@ export const metadata: Metadata = {
         media: '(prefers-color-scheme: dark)',
       },
       {
-        url: '/icon.svg',
+        url: '/kana-avatar.png',
         type: 'image/svg+xml',
       },
     ],

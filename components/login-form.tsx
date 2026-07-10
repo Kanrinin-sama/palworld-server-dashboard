@@ -337,7 +337,7 @@ export function LoginForm() {
               <div className="login-avatar-shell mx-auto">
                 <div className="login-avatar-ring avatar-circle" />
                 <div className="login-avatar-core avatar-circle overflow-hidden rounded-xl border border-primary/20 bg-primary/10">
-                  <img src="/login-mascot.jpg" alt="Pal mascot" className="login-avatar-image h-full w-full object-cover" />
+                  <img src="/kana-avatar.png" alt="Kana" className="login-avatar-image h-full w-full object-cover" />
                 </div>
                 <div className="login-avatar-spark" />
               </div>
