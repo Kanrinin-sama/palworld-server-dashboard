@@ -6,9 +6,9 @@ import type { ServerConfig, Player, ConsoleLog, ServerInfo, ServerMetrics, Banne
 
 type ConnectionStatus = 'disconnected' | 'checking' | 'connected'
 
-const FPS_HISTORY_WINDOW_MS = 30 * 60 * 1000
-const FPS_HISTORY_MAX_SAMPLES = 360
-const METRICS_POLL_INTERVAL_MS = 60 * 1000
+const FPS_HISTORY_WINDOW_MS = 4 * 60 * 60 * 1000
+const FPS_HISTORY_MAX_SAMPLES = 2880 // 4h at the 5s metrics cadence
+const METRICS_POLL_INTERVAL_MS = 5 * 1000 // 5s cadence keeps the 4h FPS history (2880 samples) populated
 const LEGACY_FPS_HISTORY_STORAGE_KEY = 'fpsHistory'
 const DEFAULT_GAME_PORT = '8211'
 const ACTIVE_SESSION_STORAGE_KEY = 'activeServerSession'
@@ -68,6 +68,9 @@ function normalizeServerConfig(config: StoredServerConfig | ServerConfig | null)
     restApiPort: String(config.restApiPort ?? '').trim(),
     gamePort: String(config.gamePort ?? DEFAULT_GAME_PORT).trim() || DEFAULT_GAME_PORT,
     adminPassword: String(config.adminPassword ?? ''),
+    // View selection only — the proxy re-derives the tier from the password
+    // on every request, so a tampered stored tier gains nothing server-side.
+    accessTier: config.accessTier === 'mod' ? 'mod' : 'admin',
   }
 }
 
@@ -174,7 +177,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     const trimmedHistory = trimFpsHistory(storedHistory)
 
     setConfigState(shouldRestoreActiveSession ? storedConfig : null)
-    setRefreshRateState(Number(localStorage.getItem(STORAGE_KEYS.refreshRate)) || 5)
+    setRefreshRateState(Math.min(Number(localStorage.getItem(STORAGE_KEYS.refreshRate)) || 5, 60)) // seconds; default 5s (owner 2026-07-11), stale minute-era values clamp to 60s
     setPlayersState(normalizePlayersPayload(readStorageValue(STORAGE_KEYS.players, [])))
     setServerInfoState(readStorageValue<ServerInfo | null>(STORAGE_KEYS.serverInfo, null))
     setServerMetricsState(readStorageValue<ServerMetrics | null>(STORAGE_KEYS.serverMetrics, null))
@@ -215,7 +218,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
   const clearConfig = useCallback(() => {
     setConfigState(null)
     setPlayersState([])
-    setRefreshRateState(5)
+    setRefreshRateState(1)
     setConsoleLogs([])
     setIsLoading({})
     setConnectionStatus('disconnected')
@@ -406,10 +409,17 @@ export function ServerProvider({ children }: { children: ReactNode }) {
       return
     }
 
+    // MOD tier never requests settings — the proxy allowlist would 403 it.
+    // info and metrics are mod-allowlisted (widget header + player count).
+    const isModTier = config.accessTier === 'mod'
+    const settingsPromise: Promise<Record<string, unknown> | null> = isModTier
+      ? Promise.resolve(null)
+      : apiCall<Record<string, unknown>>('settings')
+
     const results = await Promise.allSettled([
       apiCall<ServerInfo>('info'),
       apiCall<ServerMetrics>('metrics'),
-      apiCall<Record<string, unknown>>('settings'),
+      settingsPromise,
     ])
 
     const [infoResult, metricsResult, settingsResult] = results
@@ -426,7 +436,9 @@ export function ServerProvider({ children }: { children: ReactNode }) {
       console.warn('Failed to fetch metrics:', metricsResult.reason)
     }
 
-    if (settingsResult.status === 'fulfilled') {
+    if (isModTier) {
+      // No settings state for the mod widget.
+    } else if (settingsResult.status === 'fulfilled') {
       setSettings(settingsResult.value)
     } else {
       console.warn('Failed to fetch settings:', settingsResult.reason)
