@@ -6,6 +6,8 @@
 const WINDOW_MS = 4 * 60 * 1000
 const MAX_FAILURES = 4
 const failures = new Map<string, number[]>()
+const FAILURE_DEDUP_MS = 1500 // collapse one login attempt's burst of calls into a single counted failure
+const lastFailureAt = new Map<string, number>()
 
 export function clientIp(request: { headers: Headers }): string {
   // Behind exactly one trusted proxy (perlica-edge). Prefer its single-value
@@ -35,6 +37,9 @@ export function isLockedOut(ip: string, now = Date.now()): boolean {
 }
 
 export function recordFailure(ip: string, now = Date.now()): void {
+  // One user attempt can fire several requests within ~1s; count it ONCE.
+  if (now - (lastFailureAt.get(ip) ?? 0) < FAILURE_DEDUP_MS) return
+  lastFailureAt.set(ip, now)
   const arr = recent(ip, now)
   arr.push(now)
   failures.set(ip, arr)

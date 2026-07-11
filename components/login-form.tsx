@@ -229,37 +229,16 @@ export function LoginForm() {
       adminPassword,
     }
 
+    // LOCAL-only readiness (fixed 2026-07-10): previously this probed /info on
+    // every keystroke, and each wrong-password probe hit the server-side
+    // brute-force limiter — so merely TYPING burned failures and locked users
+    // out in ~1 attempt. No network here now; real auth happens on submit.
     if (normalizedConfig.adminPassword.length === 0) {
       setValidationState('idle')
       setValidationMessage('')
-      return
-    }
-
-    const controller = new AbortController()
-    const timeout = window.setTimeout(async () => {
-      setValidationState('checking')
-      setValidationMessage('Validating password...')
-
-      try {
-        await validateServerConnection(normalizedConfig, controller.signal)
-
-        setValidationState('valid')
-        setValidationMessage('Live validation passed: password verified.')
-      } catch (err) {
-        if (controller.signal.aborted) {
-          return
-        }
-
-        const rawMessage = err instanceof Error ? err.message : 'Validation failed'
-        const message = toFriendlyValidationMessage(rawMessage)
-        setValidationState('invalid')
-        setValidationMessage(message)
-      }
-    }, VALIDATION_DEBOUNCE_MS)
-
-    return () => {
-      controller.abort()
-      window.clearTimeout(timeout)
+    } else {
+      setValidationState('idle')
+      setValidationMessage('Press connect to authenticate.')
     }
   }, [adminPassword])
 
