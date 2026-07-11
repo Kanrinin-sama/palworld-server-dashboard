@@ -13,6 +13,9 @@ next.user-config.*
 .env.*
 !.env.example
 
+# Runtime panel credential store (scrypt password hashes) — never commit
+data/
+
 # Common ignores
 node_modules/
 .next/

@@ -19,6 +19,21 @@ interface ProxyServerConfig {
   tier: AccessTier
 }
 
+// ─── SECURITY BOUNDARY: MOD-tier endpoint allowlist ─────────────────────────
+// A mod-tier request may ONLY reach the endpoints below. Enforcement is
+// method-aware, runs against the full decoded upstream path, and happens BEFORE
+// any upstream contact — a mod-tier session hitting POST /shutdown from devtools
+// gets a 403 right here. This allowlist (not UI hiding) is the security boundary.
+// Admin tier is never filtered.
+const MOD_TIER_ALLOWLIST: ReadonlySet<string> = new Set([
+  'GET players', // roster for the widget
+  'GET info', // server name + connect validation
+  'GET metrics', // player count
+  'POST kick',
+  'POST ban',
+  'POST unban',
+])
+
 function parsePort(value: string) {
   if (!/^\d+$/.test(value)) {
     return null
@@ -142,6 +157,22 @@ async function proxyPalworldRequest(request: NextRequest, { params }: RouteConte
   }
 
   const { path } = await params
+
+  // MOD-tier enforcement: exact match of "<METHOD> <decoded path>" against the
+  // allowlist, checked before anything is forwarded upstream. Path segments
+  // arrive URL-decoded from Next, so traversal and encoded-slash tricks
+  // ("players/../shutdown", "players%2F..%2Fshutdown") produce keys that simply
+  // do not match and are rejected. Case-sensitive by design: fail closed on
+  // anything that is not an exact allowlisted endpoint.
+  const decodedPath = path.join('/')
+
+  if (serverConfig.tier === 'mod' && !MOD_TIER_ALLOWLIST.has(`${method} ${decodedPath}`)) {
+    return NextResponse.json(
+      { error: `Forbidden: "${method} /${decodedPath}" is not available to the mod tier` },
+      { status: 403 }
+    )
+  }
+
   const upstreamPath = path.map((segment) => encodeURIComponent(segment)).join('/')
   const upstreamUrl = new URL(`/v1/api/${upstreamPath}`, upstreamBaseUrl)
   const body = method === 'POST' ? await getUpstreamRequestBody(request) : undefined

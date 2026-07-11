@@ -239,18 +239,18 @@ Optional overrides:
 
 ### Configure the environment (required) ⚙️
 
-The panel needs two secrets before it can log anyone in. Copy the example file and
-fill it in — Docker Compose loads `.env` automatically:
+The panel needs a couple of secrets before it can log anyone in. Copy the example
+file and fill it in — Docker Compose loads `.env` automatically:
 
 ```bash
 cp .env.example .env
 # then edit .env
 ```
 
-Set:
+At minimum set:
 
-- `PANEL_PASSWORD` — the password you log into the panel with. Held server-side and
-  compared in constant time; the browser never receives the game credential.
+- `PANEL_INITIAL_ADMIN_PASSWORD` — seeds the panel's **admin** login on first run
+  (change it later from the in-app Settings dialog).
 - `PALWORLD_ADMIN_PASSWORD` — your **real** Palworld REST admin password
   (`AdminPassword` in `PalWorldSettings.ini`, with `RESTAPIEnabled=True`). The
   browser never sees this; the server injects it into upstream REST calls.
@@ -258,8 +258,14 @@ Set:
   is the container, so use `host.docker.internal:8212` (the bundled compose file
   does this by default) or the game host's LAN IP.
 
-See [`.env.example`](./.env.example) for the full list, including the brute-force
-limiter's `RATE_LIMIT_TRUST_PROXY` and the live-chat console's `PALWORLD_SYSTEMD_UNIT`.
+Optionally set `PANEL_INITIAL_MOD_PASSWORD` to enable a limited **mod** tier
+(kick / ban / roster only). See [`.env.example`](./.env.example) for the full
+list, including the brute-force limiter's `RATE_LIMIT_TRUST_PROXY` and the
+live-chat console's `PALWORLD_SYSTEMD_UNIT`.
+
+> The compose file mounts a named volume at `/app/data` so the panel's credential
+> store (scrypt hashes) survives container recreation. With the raw `docker run`
+> command above, add `--env-file .env -v palworld-dashboard-data:/app/data`.
 
 ### Optional: server restart (host setup) 🔁
 
