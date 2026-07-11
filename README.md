@@ -237,6 +237,64 @@ Optional overrides:
 - `PALWORLD_SERVER_DASHBOARD_IMAGE` to point at a different tag or registry
 - `PALWORLD_SERVER_DASHBOARD_PORT` to change the host port
 
+### Configure the environment (required) ⚙️
+
+The panel needs two secrets before it can log anyone in. Copy the example file and
+fill it in — Docker Compose loads `.env` automatically:
+
+```bash
+cp .env.example .env
+# then edit .env
+```
+
+Set:
+
+- `PANEL_PASSWORD` — the password you log into the panel with. Held server-side and
+  compared in constant time; the browser never receives the game credential.
+- `PALWORLD_ADMIN_PASSWORD` — your **real** Palworld REST admin password
+  (`AdminPassword` in `PalWorldSettings.ini`, with `RESTAPIEnabled=True`). The
+  browser never sees this; the server injects it into upstream REST calls.
+- `PALWORLD_REST_URL` — where the game's REST API lives. Inside Docker `127.0.0.1`
+  is the container, so use `host.docker.internal:8212` (the bundled compose file
+  does this by default) or the game host's LAN IP.
+
+See [`.env.example`](./.env.example) for the full list, including the brute-force
+limiter's `RATE_LIMIT_TRUST_PROXY` and the live-chat console's `PALWORLD_SYSTEMD_UNIT`.
+
+### Optional: server restart (host setup) 🔁
+
+The dashboard's **Restart** control holds no `sudo`. It writes a small request
+file (`PALWORLD_RESTART_REQUEST_PATH`, default `/run/palworld/restart.request`); a
+root-owned systemd path-unit watches that file and performs the restart. The
+feature is inert until you install those host-side units. Minimal example
+(Linux + systemd; adjust the unit name and paths):
+
+```ini
+# /etc/systemd/system/palworld-restart.path
+[Unit]
+Description=Watch for a Palworld dashboard restart request
+[Path]
+PathModified=/run/palworld/restart.request
+[Install]
+WantedBy=multi-user.target
+```
+
+```ini
+# /etc/systemd/system/palworld-restart.service
+[Unit]
+Description=Restart the Palworld server on dashboard request
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl restart palworld.service
+ExecStartPost=/bin/rm -f /run/palworld/restart.request
+```
+
+Ensure `/run/palworld` is writable by the dashboard's user (e.g. a `tmpfiles.d`
+rule), then `systemctl enable --now palworld-restart.path`. For the in-app
+countdown/announce to take effect, have the worker read the request JSON
+(`waittime` / `message`) and call the REST `/announce` before restarting;
+otherwise the restart happens immediately.
+
 ## First Connection Walkthrough 🧭
 
 When you open the app, you will see the login/connect screen.
