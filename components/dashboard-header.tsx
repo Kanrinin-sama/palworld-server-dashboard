@@ -12,7 +12,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { CheckIcon, CopyIcon, PaletteIcon } from 'lucide-react'
+import { CheckIcon, CopyIcon, PaletteIcon, SettingsIcon } from 'lucide-react'
+import { PanelSettingsDialog } from '@/components/panel-settings-dialog'
 
 type DashboardTab = 'dashboard' | 'map'
 
@@ -40,14 +41,7 @@ export function DashboardHeader({ activeTab = 'dashboard', onTabChange, onPlayer
   const { config, clearConfig, players, connectionStatus, serverInfo } = useServer()
   const { theme, setTheme, themes } = useTheme()
   const [addressCopied, setAddressCopied] = useState(false)
-
-  useEffect(() => {
-    document.body.classList.add('dashboard-interactive-glow')
-
-    return () => {
-      document.body.classList.remove('dashboard-interactive-glow')
-    }
-  }, [])
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   useEffect(() => {
     if (!addressCopied) return
@@ -133,6 +127,17 @@ export function DashboardHeader({ activeTab = 'dashboard', onTabChange, onPlayer
 
             {/* Right: theme, roster (<xl), disconnect */}
             <div className="flex w-full flex-wrap items-center gap-2 xl:w-auto xl:justify-self-end">
+              {config?.accessTier === 'admin' && (
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={() => setSettingsOpen(true)}
+                  aria-label="Panel settings"
+                  className="h-8 w-8"
+                >
+                  <SettingsIcon className="h-3.5 w-3.5" />
+                </Button>
+              )}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -193,6 +198,7 @@ export function DashboardHeader({ activeTab = 'dashboard', onTabChange, onPlayer
           </div>
         </div>
       </div>
+      <PanelSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </header>
   )
 }

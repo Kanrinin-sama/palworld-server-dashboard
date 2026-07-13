@@ -140,7 +140,7 @@ export function DataStream({
 
       <div className="relative z-10 flex items-center gap-2 border-b border-border/50 px-4 py-2">
         {streaming && (
-          <div className="status-dot h-1.5 w-1.5 animate-pulse rounded-full bg-green-500 shadow-[0_0_4px_rgba(34,197,94,0.6)]" />
+          <div className="status-dot h-1.5 w-1.5 rounded-full bg-green-500 shadow-[0_0_4px_rgba(34,197,94,0.6)]" />
         )}
         <span className="text-[10px] uppercase tracking-widest text-foreground/80">
           {title}

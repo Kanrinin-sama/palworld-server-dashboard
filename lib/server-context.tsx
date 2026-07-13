@@ -154,7 +154,7 @@ export function useServer() {
 export function ServerProvider({ children }: { children: ReactNode }) {
   const [config, setConfigState] = useState<ServerConfig | null>(null)
   const [players, setPlayersState] = useState<Player[]>([])
-  const [refreshRate, setRefreshRateState] = useState<number>(1)
+  const [refreshRate, setRefreshRateState] = useState<number>(5)
   const [consoleLogs, setConsoleLogs] = useState<ConsoleLog[]>([])
   const [isLoading, setIsLoading] = useState<Record<string, boolean>>({})
   const [isHydrated, setIsHydrated] = useState(false)
@@ -177,7 +177,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     const trimmedHistory = trimFpsHistory(storedHistory)
 
     setConfigState(shouldRestoreActiveSession ? storedConfig : null)
-    setRefreshRateState(Math.min(Number(localStorage.getItem(STORAGE_KEYS.refreshRate)) || 1, 60)) // seconds; default 1s (owner), stale minute-era values clamp to 60s
+    setRefreshRateState(Math.min(Number(localStorage.getItem(STORAGE_KEYS.refreshRate)) || 5, 60)) // seconds; default 5s (owner 2026-07-11), stale minute-era values clamp to 60s
     setPlayersState(normalizePlayersPayload(readStorageValue(STORAGE_KEYS.players, [])))
     setServerInfoState(readStorageValue<ServerInfo | null>(STORAGE_KEYS.serverInfo, null))
     setServerMetricsState(readStorageValue<ServerMetrics | null>(STORAGE_KEYS.serverMetrics, null))

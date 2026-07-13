@@ -12,7 +12,16 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
-import { SendIcon } from 'lucide-react'
+import { SendIcon, UserIcon, BanIcon } from 'lucide-react'
+import { createPortal } from 'react-dom'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { usePlayerActions } from '@/components/use-player-actions'
+import type { Player } from '@/lib/types'
 
 // Poll cadence for the live chat/presence feed (mirrors palcon's terminal tail).
 const CHAT_POLL_INTERVAL_MS = 4 * 1000
@@ -31,16 +40,65 @@ function eventKey(event: ChatEvent, index: number) {
   return `${event.ts}|${event.type}|${event.name}|${index}`
 }
 
-function ChatRow({ event }: { event: ChatEvent }) {
+function ChatRow({
+  event,
+  player,
+  onAction,
+}: {
+  event: ChatEvent
+  player?: Player
+  onAction: (type: 'kick' | 'ban', player: Player) => void
+}) {
+  const rowRef = useRef<HTMLDivElement | null>(null)
+  const [timePos, setTimePos] = useState<{ left: number; top: number } | null>(null)
+
+  // Timestamp is hidden inline and shown as a hover card (portalled so it
+  // escapes the feed's overflow clipping).
+  const showTime = () => {
+    const el = rowRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    setTimePos({ left: rect.right - 6, top: rect.top })
+  }
+  const hideTime = () => setTimePos(null)
+
   return (
-    <div className="flex items-start gap-2 border-b border-border/20 px-4 py-1.5">
-      <span className="mt-0.5 shrink-0 font-mono text-[10px] tabular-nums text-foreground/30">
-        {event.ts}
-      </span>
+    <div
+      ref={rowRef}
+      onMouseEnter={showTime}
+      onMouseLeave={hideTime}
+      className="flex items-start gap-2 border-b border-border/20 px-4 py-1.5 hover:bg-secondary/20"
+    >
       <span className="min-w-0 break-words leading-relaxed">
         {event.type === 'chat' ? (
           <>
-            <b className="font-semibold text-foreground">{event.name || 'unknown'}</b>
+            {player ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className="cursor-pointer font-semibold text-foreground underline-offset-2 hover:underline"
+                  >
+                    {event.name || 'unknown'}
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-40">
+                  <DropdownMenuItem onClick={() => onAction('kick', player)}>
+                    <UserIcon className="mr-2 h-4 w-4" />
+                    Kick Player
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => onAction('ban', player)}
+                    className="text-destructive focus:text-destructive"
+                  >
+                    <BanIcon className="mr-2 h-4 w-4" />
+                    Ban Player
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <b className="font-semibold text-foreground">{event.name || 'unknown'}</b>
+            )}
             <span className="text-foreground/40">: </span>
             <span className="text-foreground/90">{event.text}</span>
           </>
@@ -50,12 +108,24 @@ function ChatRow({ event }: { event: ChatEvent }) {
           <span className="text-muted-foreground">← {event.name} left</span>
         )}
       </span>
+      {timePos &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            style={{ left: timePos.left, top: timePos.top }}
+            className="pointer-events-none fixed z-[120] -translate-x-full -translate-y-1 rounded border border-border bg-card/95 px-2 py-1 font-mono text-[10px] tabular-nums text-foreground shadow-lg backdrop-blur-sm"
+          >
+            {event.ts}
+          </div>,
+          document.body,
+        )}
     </div>
   )
 }
 
 export function ChatPanel() {
-  const { config } = useServer()
+  const { config, players } = useServer()
+  const { setConfirmAction, confirmDialog } = usePlayerActions()
   const [events, setEvents] = useState<ChatEvent[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
@@ -153,6 +223,7 @@ export function ChatPanel() {
       title="Chat"
       subtitle="Live Game Chat"
       status="active"
+      className="min-h-[34rem]"
       contentClassName="mt-0 flex min-h-0 flex-1 flex-col gap-3"
     >
       {/* Console-style feed shell (DataStream aesthetic). */}
@@ -160,7 +231,7 @@ export function ChatPanel() {
         <div className="pointer-events-none absolute inset-0 bg-[repeating-linear-gradient(0deg,transparent,transparent_2px,rgba(0,0,0,0.03)_2px,rgba(0,0,0,0.03)_4px)]" />
 
         <div className="relative z-10 flex items-center gap-2 border-b border-border/50 px-4 py-2">
-          <div className="status-dot h-1.5 w-1.5 animate-pulse rounded-full bg-green-500 shadow-[0_0_4px_rgba(34,197,94,0.6)]" />
+          <div className="status-dot h-1.5 w-1.5 rounded-full bg-green-500 shadow-[0_0_4px_rgba(34,197,94,0.6)]" />
           <span className="text-[10px] uppercase tracking-widest text-foreground/80">Live Game Chat</span>
           <span className="ml-auto font-mono text-[10px] text-foreground/40">{events.length}</span>
         </div>
@@ -176,7 +247,14 @@ export function ChatPanel() {
                 No chat yet. Player messages will appear here.
               </div>
             ) : (
-              events.map((event, index) => <ChatRow key={eventKey(event, index)} event={event} />)
+              events.map((event, index) => (
+              <ChatRow
+                key={eventKey(event, index)}
+                event={event}
+                player={players.find((p) => p.name === event.name)}
+                onAction={(type, player) => setConfirmAction({ type, player })}
+              />
+            ))
             )}
           </div>
         </div>
@@ -202,6 +280,7 @@ export function ChatPanel() {
           <span className="hidden sm:inline">Send</span>
         </Button>
       </form>
+      {confirmDialog}
     </PanelSection>
   )
 }

@@ -135,7 +135,7 @@ async function fetchAccessTier(password: string): Promise<AccessTier | 'invalid'
 export function LoginForm() {
   const { setConfig } = useServer()
   const [adminPassword, setAdminPassword] = useState('')
-  const [rememberMe, setRememberMe] = useState(false)
+  const [rememberMe, setRememberMe] = useState(true)
   const [isConnecting, setIsConnecting] = useState(false)
   const [error, setError] = useState('')
   const [validationState, setValidationState] = useState<ValidationState>('idle')

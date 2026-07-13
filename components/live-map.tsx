@@ -194,7 +194,15 @@ export function LiveMap({ activeTab = 'map', onTabChange }: LiveMapProps) {
     if (settleTimerRef.current != null) window.clearTimeout(settleTimerRef.current)
     settleTimerRef.current = window.setTimeout(() => {
       settleTimerRef.current = null
-      if (pendingViewRef.current) setView(pendingViewRef.current)
+      const pv = pendingViewRef.current
+      if (!pv) return
+      setView(pv)
+      // Sync the imperative gesture transforms to the committed layout. Without this, a
+      // React render that recomputes the SAME overlayTransform it already held (e.g. the
+      // identity it had at gesture start) is skipped by React's DOM diff, leaving a stale
+      // gesture transform on the marker plane -> markers drift until the next pan re-writes it.
+      if (mapPlaneRef.current) mapPlaneRef.current.style.transform = `translate(${pv.tx}px, ${pv.ty}px) scale(${pv.scale})`
+      if (markerPlaneRef.current) markerPlaneRef.current.style.transform = 'translate(0px, 0px) scale(1)'
     }, 150)
   }, [])
 
@@ -593,38 +601,22 @@ export function LiveMap({ activeTab = 'map', onTabChange }: LiveMapProps) {
             </DropdownMenuContent>
           </DropdownMenu>
 
-          <div className="flex h-10 items-center gap-0.5 rounded-md border border-border/60 bg-muted/20 p-0.5">
-            <button
-              type="button"
-              onClick={() => switchMapMode('world')}
-              aria-pressed={mapMode === 'world'}
-              className={`flex h-full items-center gap-1.5 rounded border px-3 font-mono text-[11px] uppercase tracking-[0.2em] transition-colors ${
-                mapMode === 'world'
-                  ? 'border-primary/60 bg-primary/10 text-primary'
-                  : 'border-transparent text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <MapIcon className="h-3.5 w-3.5" />
-              World
-            </button>
-            <button
-              type="button"
-              onClick={() => switchMapMode('tree')}
-              aria-pressed={mapMode === 'tree'}
-              className={`flex h-full items-center gap-1.5 rounded border px-3 font-mono text-[11px] uppercase tracking-[0.2em] transition-colors ${
-                mapMode === 'tree'
-                  ? 'border-primary/60 bg-primary/10 text-primary'
-                  : 'border-transparent text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <TreePineIcon className="h-3.5 w-3.5" />
-              Tree
-            </button>
-          </div>
+          <Tabs value={mapMode} onValueChange={(value) => switchMapMode(value === 'tree' ? 'tree' : 'world')}>
+            <TabsList className="h-10 rounded-md border border-border/60 bg-muted/20">
+              <TabsTrigger value="world" className="gap-1.5 px-3 font-mono text-[11px] uppercase tracking-[0.2em] data-[state=active]:border-primary/60 data-[state=active]:bg-primary/10 data-[state=active]:text-primary sm:px-4">
+                <MapIcon className="h-3.5 w-3.5" />
+                World
+              </TabsTrigger>
+              <TabsTrigger value="tree" className="gap-1.5 px-3 font-mono text-[11px] uppercase tracking-[0.2em] data-[state=active]:border-primary/60 data-[state=active]:bg-primary/10 data-[state=active]:text-primary sm:px-4">
+                <TreePineIcon className="h-3.5 w-3.5" />
+                Tree
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
 
           <div className="flex h-10 items-center gap-2 rounded-md border border-border/60 bg-muted/20 px-3">
             <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Cursor</span>
-            <span className="font-mono text-xs text-foreground">
+            <span className="inline-block w-[24ch] text-right font-mono text-xs tabular-nums text-foreground">
               {mousePosition[0]}, {mousePosition[1]}
             </span>
           </div>
@@ -707,7 +699,7 @@ export function LiveMap({ activeTab = 'map', onTabChange }: LiveMapProps) {
                 key={point.key}
                 src="/palworld-map/fast_travel.webp"
                 alt=""
-                className="absolute z-20 h-7 w-7 -translate-x-1/2 -translate-y-1/2 select-none object-contain"
+                className="absolute z-20 h-[42px] w-[42px] -translate-x-1/2 -translate-y-1/2 select-none object-contain"
                 style={{
                   left: `${ov.tx + point.frac.fx * MAP_BASIS * ov.scale}px`,
                   top: `${ov.ty + point.frac.fy * MAP_BASIS * ov.scale}px`,
@@ -722,7 +714,7 @@ export function LiveMap({ activeTab = 'map', onTabChange }: LiveMapProps) {
                 key={point.key}
                 src="/palworld-map/boss_tower.webp"
                 alt=""
-                className="absolute z-20 h-7 w-7 -translate-x-1/2 -translate-y-1/2 select-none object-contain"
+                className="absolute z-20 h-[42px] w-[42px] -translate-x-1/2 -translate-y-1/2 select-none object-contain"
                 style={{
                   left: `${ov.tx + point.frac.fx * MAP_BASIS * ov.scale}px`,
                   top: `${ov.ty + point.frac.fy * MAP_BASIS * ov.scale}px`,
@@ -750,13 +742,13 @@ export function LiveMap({ activeTab = 'map', onTabChange }: LiveMapProps) {
                         onMouseLeave={() => setHoveredGroupId((current) => (current === group.id ? null : current))}
                       >
                         <div
-                          className="pointer-events-none absolute left-0 top-0 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-primary/45 bg-primary/35 shadow-lg shadow-primary/40"
+                          className="pointer-events-none absolute left-0 top-0 h-[18px] w-[18px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-primary/45 bg-primary/35 shadow-lg shadow-primary/40"
                           style={{ transform: 'translate(-50%, -50%)' }}
                         />
                         <img
                           src="/palworld-map/player.webp"
                           alt=""
-                          className="absolute left-0 top-0 h-7 w-7 -translate-x-1/2 -translate-y-1/2 select-none object-contain drop-shadow-[0_6px_14px_rgba(15,23,42,0.7)]"
+                          className="absolute left-0 top-0 h-[42px] w-[42px] -translate-x-1/2 -translate-y-1/2 select-none object-contain drop-shadow-[0_6px_14px_rgba(15,23,42,0.7)]"
                           style={{ transform: 'translate(-50%, -50%)' }}
                           draggable={false}
                         />
@@ -768,7 +760,7 @@ export function LiveMap({ activeTab = 'map', onTabChange }: LiveMapProps) {
                           }}
                         >
                           <div
-                            className={`absolute left-0 top-0 whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-semibold shadow-xl transition-all ${
+                            className={`absolute left-0 top-0 whitespace-nowrap rounded-full border px-3 py-1 text-[15px] font-semibold shadow-xl transition-all ${
                               isCluster
                                 ? isHovered
                                   ? 'border-primary/45 bg-card/95 text-foreground'

@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { DashboardHeader } from '@/components/dashboard-header'
 import { OnlinePlayersPanel } from '@/components/online-players-panel'
 import { MobilePlayersSheet } from '@/components/mobile-players-sheet'
@@ -37,6 +37,13 @@ export function Dashboard() {
   const { connectionStatus, players } = useServer()
   const [playersSheetOpen, setPlayersSheetOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<DashboardTab>(readStoredTab)
+
+  // Interactive-glow theme spans BOTH dashboard and map tabs (moved here from
+  // DashboardHeader, which unmounts on the map tab and took the glow with it).
+  useEffect(() => {
+    document.body.classList.add('dashboard-interactive-glow')
+    return () => document.body.classList.remove('dashboard-interactive-glow')
+  }, [])
 
   const handleTabChange = useCallback((tab: DashboardTab) => {
     setActiveTab(tab)
@@ -76,18 +83,19 @@ export function Dashboard() {
                           <MetricsCard />
                         </div>
 
-                        {/* Control grid */}
-                        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                          <AnnouncementCard />
-                          <ServerManagementCard />
+                        {/* Top row: live feeds, kept tall (feeds have no intrinsic height). */}
+                        <div className="grid gap-4 [grid-auto-rows:1fr] md:grid-cols-2 xl:grid-cols-3">
+                          <BanManagementCard />
+                          <ConsolePanel />
                           <ChatPanel />
                         </div>
 
-                        {/* Configuration + console + sanctions */}
-                        <div className="mt-4 grid gap-4 xl:grid-cols-3">
+                        {/* Bottom row: config/controls sized to their own content — lines
+                            up with the Announcements card (Config Snapshot JSON flexes). */}
+                        <div className="mt-4 grid gap-4 [grid-auto-rows:1fr] md:grid-cols-2 xl:grid-cols-3">
                           <SettingsCard />
-                          <ConsolePanel />
-                          <BanManagementCard />
+                          <ServerManagementCard />
+                          <AnnouncementCard />
                         </div>
                       </div>
                     </ScrollArea>

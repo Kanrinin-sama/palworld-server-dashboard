@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer'
 import { NextRequest, NextResponse } from 'next/server'
-import { classifyPassword } from '@/lib/access-tier'
+import { classifyPassword, tierForClass } from '@/lib/access-tier'
 import { clientIp, isLockedOut, recordFailure } from '@/lib/rate-limit'
 import { PALWORLD_PROXY_HEADERS } from '@/lib/palworld'
 import type { AccessTier } from '@/lib/types'
@@ -21,11 +21,10 @@ interface ProxyServerConfig {
 
 // ─── SECURITY BOUNDARY: MOD-tier endpoint allowlist ─────────────────────────
 // A mod-tier request may ONLY reach the endpoints below. Enforcement is
-// method-aware, runs against the full decoded upstream path, and happens
-// BEFORE any upstream contact — a mod-tier session hitting POST /shutdown
-// from devtools gets a 403 right here. This allowlist (not UI hiding) is the
-// security boundary. Admin tier and directly-entered real-admin-password
-// requests are never filtered.
+// method-aware, runs against the full decoded upstream path, and happens BEFORE
+// any upstream contact — a mod-tier session hitting POST /shutdown from devtools
+// gets a 403 right here. This allowlist (not UI hiding) is the security boundary.
+// Admin tier is never filtered.
 const MOD_TIER_ALLOWLIST: ReadonlySet<string> = new Set([
   'GET players', // roster for the widget
   'GET info', // server name + connect validation
@@ -72,53 +71,31 @@ function buildUpstreamBaseUrl(serverIp: string, serverPort: number) {
   }
 }
 
-function getServerConfig(request: NextRequest) {
-  const searchParams = request.nextUrl.searchParams
-  // SECURITY: the upstream REST target is PINNED server-side and is NOT
-  // client-controllable. Before this, the proxy connected to any client-supplied
-  // host:port — an SSRF once the panel is WAN-exposed (probe/POST to internal
-  // hosts like 127.0.0.1:5432). Client serverIp/serverPort are now ignored.
+// Resolves the PINNED upstream target and injects the game's real REST admin
+// password from env. The tier was already verified by the caller, so this does
+// NOT re-hash the presented password — an invalid request costs one scrypt pass,
+// not two.
+//
+// SECURITY: the upstream REST target is PINNED server-side and is NOT
+// client-controllable. Before this, the proxy connected to any client-supplied
+// host:port — an SSRF once the panel is WAN-exposed (probe/POST to internal
+// hosts like 127.0.0.1:5432). Client serverIp/serverPort are ignored.
+function getServerConfig(tier: AccessTier): ProxyServerConfig | null {
   const pinned = new URL(process.env.PALWORLD_REST_URL ?? 'http://127.0.0.1:8212')
-  const serverIp = pinned.hostname
   const serverPort = parsePort(pinned.port || '8212')
-  const adminPassword =
-    request.headers.get(PALWORLD_PROXY_HEADERS.adminPassword) ??
-    searchParams.get('adminPassword') ??
-    ''
+  // The game's real REST admin password is injected into the upstream call and
+  // never reaches the client. PALWORLD_REAL_ADMIN_PASSWORD is an accepted alias.
+  const gameAdminPassword =
+    process.env.PALWORLD_ADMIN_PASSWORD ?? process.env.PALWORLD_REAL_ADMIN_PASSWORD ?? ''
 
-  // perlica shim (2026-07-10): the browser never holds the real game admin
-  // credential. Panel passwords are swapped server-side:
-  //   PANEL_LOGIN_PASSWORD → real credential upstream, ADMIN tier (full access)
-  //   MOD_PASSWORD         → real credential upstream, MOD tier (allowlist-enforced)
-  //   real credential      → passes through unchanged, ADMIN tier
-  //   anything else        → passes through unchanged, upstream rejects it (401)
-  // The tier is re-derived from the presented password on EVERY request; no
-  // client-supplied field can influence it.
-  const realAdmin = process.env.PALWORLD_REAL_ADMIN_PASSWORD
-  const passwordClass = classifyPassword(adminPassword)
-
-  let tier: AccessTier = 'admin'
-  let effectivePassword = adminPassword
-
-  if (passwordClass === 'mod') {
-    // Mod tier holds even if the real credential is missing from the env —
-    // the request then fails upstream auth instead of gaining broader access.
-    tier = 'mod'
-    if (realAdmin) {
-      effectivePassword = realAdmin
-    }
-  } else if (passwordClass === 'panel-admin' && realAdmin) {
-    effectivePassword = realAdmin
-  }
-
-  if (serverPort == null || !adminPassword) {
+  if (serverPort == null || !gameAdminPassword) {
     return null
   }
 
   return {
-    serverIp: serverIp.trim(),
+    serverIp: pinned.hostname.trim(),
     serverPort,
-    adminPassword: effectivePassword,
+    adminPassword: gameAdminPassword,
     tier,
   } satisfies ProxyServerConfig
 }
@@ -156,18 +133,21 @@ async function proxyPalworldRequest(request: NextRequest, { params }: RouteConte
   if (isLockedOut(ip)) {
     return NextResponse.json({ error: 'Too many attempts. Try again later.' }, { status: 429 })
   }
-  const presented =
-    request.headers.get(PALWORLD_PROXY_HEADERS.adminPassword) ??
-    request.nextUrl.searchParams.get('adminPassword') ??
-    ''
-  if (classifyPassword(presented) === 'unknown') {
+  // Header-only (never the query string, which leaks into logs).
+  const presented = request.headers.get(PALWORLD_PROXY_HEADERS.adminPassword) ?? ''
+  const tier = tierForClass(classifyPassword(presented))
+  if (tier === 'invalid') {
     recordFailure(ip)
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const serverConfig = getServerConfig(request)
+  const serverConfig = getServerConfig(tier)
 
   if (!serverConfig) {
-    return NextResponse.json({ error: 'Missing server configuration' }, { status: 400 })
+    return NextResponse.json(
+      { error: 'Server proxy is not configured (missing PALWORLD_ADMIN_PASSWORD).' },
+      { status: 500 }
+    )
   }
 
   const upstreamBaseUrl = buildUpstreamBaseUrl(serverConfig.serverIp, serverConfig.serverPort)
@@ -181,9 +161,9 @@ async function proxyPalworldRequest(request: NextRequest, { params }: RouteConte
   // MOD-tier enforcement: exact match of "<METHOD> <decoded path>" against the
   // allowlist, checked before anything is forwarded upstream. Path segments
   // arrive URL-decoded from Next, so traversal and encoded-slash tricks
-  // ("players/../shutdown", "players%2F..%2Fshutdown") produce keys that
-  // simply do not match and are rejected. Case-sensitive by design: fail
-  // closed on anything that is not an exact allowlisted endpoint.
+  // ("players/../shutdown", "players%2F..%2Fshutdown") produce keys that simply
+  // do not match and are rejected. Case-sensitive by design: fail closed on
+  // anything that is not an exact allowlisted endpoint.
   const decodedPath = path.join('/')
 
   if (serverConfig.tier === 'mod' && !MOD_TIER_ALLOWLIST.has(`${method} ${decodedPath}`)) {

@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import { cn } from '@/lib/utils'
 import { InfoPanel } from '@/components/status-bar'
 import { useServer } from '@/lib/server-context'
+import { buildPalworldProxyHeaders } from '@/lib/palworld'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -246,7 +247,7 @@ export function AnnouncementCard() {
 }
 
 export function ServerManagementCard() {
-  const { apiCall, isLoading } = useServer()
+  const { apiCall, isLoading, config } = useServer()
   const [confirmAction, setConfirmAction] = useState<'shutdown' | 'stop' | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
   const [activeSchedule, setActiveSchedule] = useState<{ label: string; endsAt: number } | null>(null)
@@ -287,64 +288,52 @@ export function ServerManagementCard() {
     }
   }
 
-  const sendRestartMessage = async (text: string) => {
-    await apiCall('announce', 'POST', { message: text })
-  }
-
-  const executeScheduledRestartShutdown = async () => {
-    try {
-      await apiCall('save', 'POST')
-      await sendRestartMessage('World has been saved successfully.')
-      toast.success('World saved before shutdown')
-
-      await apiCall('shutdown', 'POST', { waittime: 1 })
-      toast.success('Server shutdown initiated')
-    } catch {
-      toast.error('Failed to shutdown server')
-    }
+  const triggerServerRestart = async (waittimeSec: number, message: string): Promise<boolean> => {
+    if (!config) return false
+    const headers = new Headers(buildPalworldProxyHeaders(config))
+    headers.set('Content-Type', 'application/json')
+    const res = await fetch('/api/server-restart', {
+      method: 'POST',
+      headers,
+      cache: 'no-store',
+      body: JSON.stringify({ waittime: waittimeSec, message }),
+    })
+    return res.ok
   }
 
   const scheduleRestart = async (preset: PresetMessage) => {
-    if (!preset.reminders?.length) return
+    const lastReminderMs = preset.reminders?.length
+      ? preset.reminders[preset.reminders.length - 1].delayMs
+      : 0
+    const waittimeMs = lastReminderMs + 10_000
 
+    clearScheduleTimers()
     try {
-      await sendRestartMessage(preset.message)
-      toast.success('Announcement sent')
-
-      clearScheduleTimers()
-
-      const lastReminderMs = preset.reminders[preset.reminders.length - 1].delayMs
-      const shutdownDelayMs = lastReminderMs + 10_000
-      setActiveSchedule({ label: preset.label, endsAt: Date.now() + shutdownDelayMs })
-      setRemaining(shutdownDelayMs)
-
-      const refs = preset.reminders.map(({ delayMs, message: reminderMsg }) =>
-        setTimeout(async () => {
-          try {
-            await sendRestartMessage(reminderMsg)
-          } catch {}
-          toast.info(reminderMsg, { duration: 4000 })
-        }, delayMs)
-      )
-
-      const shutdownTimer = setTimeout(async () => {
-        await executeScheduledRestartShutdown()
-        clearScheduleTimers()
-      }, shutdownDelayMs)
-
-      timerRefs.current = [...refs, shutdownTimer]
+      const ok = await triggerServerRestart(Math.round(waittimeMs / 1000), preset.message)
+      if (!ok) {
+        toast.error('Failed to schedule restart — is the server host integration set up?')
+        return
+      }
+      setActiveSchedule({ label: preset.label, endsAt: Date.now() + waittimeMs })
+      setRemaining(waittimeMs)
+      toast.success('Restart scheduled — the server will come back automatically')
     } catch {
-      toast.error('Failed to send announcement')
+      toast.error('Failed to schedule restart')
     }
   }
 
   const cancelRestartSchedule = async () => {
     clearScheduleTimers()
+    if (!config) {
+      toast.info('Schedule cancelled')
+      return
+    }
     try {
-      await sendRestartMessage('✅ Server restart has been cancelled.')
-      toast.success('Restart cancelled — players notified.')
+      const headers = new Headers(buildPalworldProxyHeaders(config))
+      await fetch('/api/server-restart', { method: 'DELETE', headers, cache: 'no-store' })
+      toast.success('Restart cancelled — players notified')
     } catch {
-      toast.info('Schedule cancelled (announcement failed).')
+      toast.info('Cancel request failed to send')
     }
   }
 
@@ -452,9 +441,8 @@ export function ServerManagementCard() {
           <div className="space-y-1.5 rounded-lg border border-amber-500/25 bg-amber-500/5 p-2.5">
             <p className="text-[11px] font-semibold text-amber-300">Restart Schedules</p>
             <p className="text-[10px] leading-relaxed text-amber-200/85">
-              Note: Triggering a restart schedule takes effect immediately and restarts the server after the selected
-              delay. If the Docker restart policy is not set to <span className="font-mono">always</span> or{' '}
-              <span className="font-mono">unless-stopped</span>, you'll need to start it manually afterward.
+              Triggering a restart announces a countdown to players, then performs a graceful save-and-restart on the
+              host — the server comes back automatically, no manual start needed. Hit Cancel to abort before it fires.
             </p>
             <div className="flex flex-wrap gap-1.5">
               {RESTART_PRESET_MESSAGES.map((preset) => (
@@ -546,7 +534,7 @@ export function BanManagementCard() {
   }
 
   return (
-    <PanelSection title="Ban Management" subtitle="Sanctions Ledger" status={bannedPlayers.length > 0 ? 'pending' : 'active'}>
+    <PanelSection title="Ban Management" subtitle="Sanctions Ledger" status={bannedPlayers.length > 0 ? 'pending' : 'active'} className="min-h-[34rem]">
         <div className="space-y-2">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Banned Players ({bannedPlayers.length})</p>
           {bannedPlayers.length === 0 ? (
@@ -762,7 +750,7 @@ function FpsHistoryGraph({
                   points={pointString}
                   className="text-chart-2 graph-stroke-rounded"
                   stroke="url(#fpsLineGradient)"
-                  strokeWidth="3.5"
+                  strokeWidth="1"
                   strokeLinejoin="round"
                   strokeLinecap="round"
                   vectorEffect="non-scaling-stroke"
@@ -1033,7 +1021,7 @@ export function SettingsCard() {
         {settings && (
           <div
             ref={jsonContainerRef}
-            className="settings-json-scroll max-h-[400px] overflow-auto rounded-lg bg-secondary/50 p-3"
+            className="settings-json-scroll max-h-[165px] overflow-auto rounded-lg bg-secondary/50 p-3"
             style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' }}
           >
             {!hasSearchResults && normalizedQuery && (
