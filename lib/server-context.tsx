@@ -8,22 +8,23 @@ type ConnectionStatus = 'disconnected' | 'checking' | 'connected'
 
 // FPS history is SERVER-SIDE (owner order 2026-07-13): palworld-fps-sampler.service
 // maintains the authoritative 1h ring (5s cadence) in /run/palworld-metrics and the
-// panel only fetches + displays it via /api/fps-history — the browser never collects.
+// panel only fetches + displays it — the browser never collects.
 // These constants sanitize the fetched payload and must match the sampler.
 const FPS_HISTORY_WINDOW_MS = 1 * 60 * 60 * 1000
 const FPS_HISTORY_MAX_SAMPLES = 720 // 1h at the sampler's 5s cadence
-const METRICS_POLL_INTERVAL_MS = 5 * 1000 // live metrics poll; also drives the fps-history re-fetch
 
-// Roster refresh-rate policy (owner 2026-07-13): REST polls cost PalServer game-thread time.
-const REFRESH_RATE_DEFAULT_S = 10
-const clampRefreshRate = (rate: number) => Math.min(Math.max(rate, 5), 60)
+// Owner order 2026-07-14: ONE combined snapshot request (metrics + players +
+// fps history) on a FIXED 15s cadence via /api/server-snapshot. No separate
+// metrics/roster polls, no user-configurable poll rates.
+const SNAPSHOT_POLL_INTERVAL_MS = 15 * 1000
+
 const LEGACY_FPS_HISTORY_STORAGE_KEY = 'fpsHistory'
+const LEGACY_REFRESH_RATE_STORAGE_KEY = 'refreshRateOnlinePlayers'
 const DEFAULT_GAME_PORT = '8211'
 const ACTIVE_SESSION_STORAGE_KEY = 'activeServerSession'
 
 const STORAGE_KEYS = {
   config: 'serverConfig',
-  refreshRate: 'refreshRateOnlinePlayers',
   players: 'onlinePlayers',
   serverInfo: 'serverInfo',
   serverMetrics: 'serverMetrics',
@@ -35,7 +36,7 @@ const STORAGE_KEYS = {
 
 const SERVER_STORAGE_KEYS_TO_CLEAR = [
   STORAGE_KEYS.config,
-  STORAGE_KEYS.refreshRate,
+  LEGACY_REFRESH_RATE_STORAGE_KEY,
   STORAGE_KEYS.players,
   STORAGE_KEYS.serverInfo,
   STORAGE_KEYS.serverMetrics,
@@ -117,8 +118,6 @@ interface ServerContextType {
   isConfigured: boolean
   players: Player[]
   setPlayers: (players: Player[]) => void
-  refreshRate: number
-  setRefreshRate: (rate: number) => void
   consoleLogs: ConsoleLog[]
   addLog: (log: Omit<ConsoleLog, 'id' | 'timestamp'>) => void
   clearLogs: () => void
@@ -132,13 +131,21 @@ interface ServerContextType {
   settings: Record<string, unknown> | null
   setSettings: (settings: Record<string, unknown> | null) => void
   fetchAllData: () => Promise<void>
+  fetchSnapshot: () => Promise<void>
   bannedPlayers: BannedPlayer[]
   addBannedPlayer: (player: BannedPlayer) => void
   removeBannedPlayer: (steamId: string) => void
   connectionStatus: ConnectionStatus
   lastConnectionError: string | null
-  nextMetricsFetchAt: number | null
-  metricsPollIntervalMs: number
+  nextSnapshotFetchAt: number | null
+  snapshotPollIntervalMs: number
+}
+
+interface SnapshotPayload {
+  metrics?: ServerMetrics
+  players?: unknown
+  fpsHistory?: { samples?: FpsSample[] }
+  error?: string
 }
 
 const ServerContext = createContext<ServerContextType | null>(null)
@@ -154,7 +161,6 @@ export function useServer() {
 export function ServerProvider({ children }: { children: ReactNode }) {
   const [config, setConfigState] = useState<ServerConfig | null>(null)
   const [players, setPlayersState] = useState<Player[]>([])
-  const [refreshRate, setRefreshRateState] = useState<number>(REFRESH_RATE_DEFAULT_S)
   const [consoleLogs, setConsoleLogs] = useState<ConsoleLog[]>([])
   const [isLoading, setIsLoading] = useState<Record<string, boolean>>({})
   const [isHydrated, setIsHydrated] = useState(false)
@@ -166,21 +172,22 @@ export function ServerProvider({ children }: { children: ReactNode }) {
   const [bannedPlayers, setBannedPlayersState] = useState<BannedPlayer[]>([])
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected')
   const [lastConnectionError, setLastConnectionError] = useState<string | null>(null)
-  const [nextMetricsFetchAt, setNextMetricsFetchAt] = useState<number | null>(null)
+  const [nextSnapshotFetchAt, setNextSnapshotFetchAt] = useState<number | null>(null)
 
   useEffect(() => {
     const storedConfig = normalizeServerConfig(readStorageValue<StoredServerConfig | null>(STORAGE_KEYS.config, null))
     const shouldRestoreActiveSession = isActiveSessionStored()
 
-    // FPS history moved server-side — scrub stale client-collected history keys.
+    // FPS history moved server-side; poll cadence is fixed — scrub stale keys.
     Object.keys(localStorage)
-      .filter((key) => key === LEGACY_FPS_HISTORY_STORAGE_KEY || key.startsWith(`${STORAGE_KEYS.fpsHistory}:`))
+      .filter((key) =>
+        key === LEGACY_FPS_HISTORY_STORAGE_KEY ||
+        key === LEGACY_REFRESH_RATE_STORAGE_KEY ||
+        key.startsWith(`${STORAGE_KEYS.fpsHistory}:`)
+      )
       .forEach((key) => localStorage.removeItem(key))
 
     setConfigState(shouldRestoreActiveSession ? storedConfig : null)
-    const storedRefreshRate = clampRefreshRate(Number(localStorage.getItem(STORAGE_KEYS.refreshRate)) || REFRESH_RATE_DEFAULT_S) // seconds; stale minute-era values clamp to 60s
-    setRefreshRateState(storedRefreshRate)
-    localStorage.setItem(STORAGE_KEYS.refreshRate, storedRefreshRate.toString()) // write-back so storage can't keep a sub-floor value
     setPlayersState(normalizePlayersPayload(readStorageValue(STORAGE_KEYS.players, [])))
     setServerInfoState(readStorageValue<ServerInfo | null>(STORAGE_KEYS.serverInfo, null))
     setServerMetricsState(readStorageValue<ServerMetrics | null>(STORAGE_KEYS.serverMetrics, null))
@@ -216,7 +223,6 @@ export function ServerProvider({ children }: { children: ReactNode }) {
   const clearConfig = useCallback(() => {
     setConfigState(null)
     setPlayersState([])
-    setRefreshRateState(REFRESH_RATE_DEFAULT_S) // review fix 2026-07-13: was 1 — bypassed the clamp and reinstated the rescinded 1s poll on disconnect->reconnect
     setConsoleLogs([])
     setIsLoading({})
     setConnectionStatus('disconnected')
@@ -226,7 +232,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     setFpsHistoryState([])
     setSettingsState(null)
     setBannedPlayersState([])
-    setNextMetricsFetchAt(null)
+    setNextSnapshotFetchAt(null)
 
     const storedConfigRaw = localStorage.getItem(STORAGE_KEYS.config)
     let rememberedConfig: ServerConfig | null = null
@@ -251,12 +257,6 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     const normalizedPlayers = normalizePlayersPayload(newPlayers)
     setPlayersState(normalizedPlayers)
     writeStorageValue(STORAGE_KEYS.players, normalizedPlayers)
-  }, [])
-
-  const setRefreshRate = useCallback((rate: number) => {
-    const clamped = clampRefreshRate(rate)
-    setRefreshRateState(clamped)
-    localStorage.setItem(STORAGE_KEYS.refreshRate, clamped.toString())
   }, [])
 
   const setServerInfo = useCallback((info: ServerInfo | null) => {
@@ -393,40 +393,76 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     }
   }, [config, addLog])
 
-  // Pulls the server-side 1h FPS ring (palworld-fps-sampler.service) via
-  // /api/fps-history — the panel displays it verbatim and never collects its
-  // own history. Admin tier only: the mod widget has no FPS graph.
-  const fetchFpsHistory = useCallback(async () => {
-    if (!config || config.accessTier !== 'admin') {
+  // ONE combined snapshot per tick (owner order 2026-07-14): /api/server-snapshot
+  // returns metrics + players (+ the server-side 1h FPS ring for admin tier) in
+  // a single request. The panel never polls those endpoints separately.
+  const fetchSnapshot = useCallback(async () => {
+    if (!config) {
       return
     }
 
-    try {
-      const response = await fetch('/api/fps-history', {
-        headers: buildPalworldProxyHeaders(config),
-        cache: 'no-store',
-      })
+    setConnectionStatus((current) => (current === 'disconnected' ? 'checking' : current))
+    setIsLoading(prev => ({ ...prev, snapshot: true }))
 
-      if (!response.ok) {
-        throw new Error(`fps-history responded with ${response.status}`)
+    try {
+      const headers = new Headers(buildPalworldProxyHeaders(config))
+      headers.set('Accept', 'application/json')
+
+      const response = await fetch('/api/server-snapshot', { headers, cache: 'no-store' })
+      const responseText = await response.text()
+
+      let payload: SnapshotPayload = {}
+      try {
+        payload = JSON.parse(responseText) as SnapshotPayload
+      } catch {
+        payload = {}
       }
 
-      const payload = (await response.json()) as { samples?: FpsSample[] }
-      setFpsHistoryState(trimFpsHistory(Array.isArray(payload.samples) ? payload.samples : []))
+      if (!response.ok) {
+        throw new Error(payload.error || response.statusText)
+      }
+
+      if (payload.metrics) {
+        setServerMetrics(payload.metrics)
+      }
+      if (payload.players !== undefined) {
+        setPlayers(payload.players as Player[]) // setPlayers normalizes any payload shape
+      }
+      if (payload.fpsHistory && Array.isArray(payload.fpsHistory.samples)) {
+        setFpsHistoryState(trimFpsHistory(payload.fpsHistory.samples))
+      }
+
+      setConnectionStatus('connected')
+      setLastConnectionError(null)
     } catch (error) {
-      console.warn('Failed to fetch FPS history:', error)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      const isConnectivityError =
+        errorMessage.includes('Failed to connect') ||
+        errorMessage.includes('fetch failed') ||
+        errorMessage.includes('ECONN') ||
+        errorMessage.includes('NetworkError') ||
+        errorMessage.includes('unreachable')
+
+      if (isConnectivityError) {
+        setConnectionStatus('disconnected')
+        setLastConnectionError(errorMessage)
+      }
+
+      console.warn('Failed to fetch server snapshot:', error)
+    } finally {
+      setIsLoading(prev => ({ ...prev, snapshot: false }))
     }
-  }, [config])
+  }, [config, setServerMetrics, setPlayers])
 
   const fetchAllData = useCallback(async () => {
     if (!config) {
       return
     }
 
-    void fetchFpsHistory()
+    // Metrics + players + fps history ride the combined snapshot.
+    void fetchSnapshot()
 
     // MOD tier never requests settings — the proxy allowlist would 403 it.
-    // info and metrics are mod-allowlisted (widget header + player count).
     const isModTier = config.accessTier === 'mod'
     const settingsPromise: Promise<Record<string, unknown> | null> = isModTier
       ? Promise.resolve(null)
@@ -434,22 +470,15 @@ export function ServerProvider({ children }: { children: ReactNode }) {
 
     const results = await Promise.allSettled([
       apiCall<ServerInfo>('info'),
-      apiCall<ServerMetrics>('metrics'),
       settingsPromise,
     ])
 
-    const [infoResult, metricsResult, settingsResult] = results
+    const [infoResult, settingsResult] = results
 
     if (infoResult.status === 'fulfilled') {
       setServerInfo(infoResult.value)
     } else {
       console.warn('Failed to fetch server info:', infoResult.reason)
-    }
-
-    if (metricsResult.status === 'fulfilled') {
-      setServerMetrics(metricsResult.value)
-    } else {
-      console.warn('Failed to fetch metrics:', metricsResult.reason)
     }
 
     if (isModTier) {
@@ -459,20 +488,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     } else {
       console.warn('Failed to fetch settings:', settingsResult.reason)
     }
-  }, [config, apiCall, fetchFpsHistory, setServerInfo, setServerMetrics, setSettings])
-
-  const fetchMetrics = useCallback(async () => {
-    if (!config) {
-      return
-    }
-
-    try {
-      const metrics = await apiCall<ServerMetrics>('metrics')
-      setServerMetrics(metrics)
-    } catch (error) {
-      console.warn('Failed to poll server metrics:', error)
-    }
-  }, [config, apiCall, setServerMetrics])
+  }, [config, apiCall, fetchSnapshot, setServerInfo, setSettings])
 
   useEffect(() => {
     if (config && isHydrated) {
@@ -482,27 +498,26 @@ export function ServerProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!config || !isHydrated) {
-      setNextMetricsFetchAt(null)
+      setNextSnapshotFetchAt(null)
       return
     }
 
-    const scheduleNextMetricsFetch = () => {
-      setNextMetricsFetchAt(Date.now() + METRICS_POLL_INTERVAL_MS)
+    const scheduleNextSnapshotFetch = () => {
+      setNextSnapshotFetchAt(Date.now() + SNAPSHOT_POLL_INTERVAL_MS)
     }
 
-    scheduleNextMetricsFetch()
+    scheduleNextSnapshotFetch()
 
     const interval = window.setInterval(() => {
-      scheduleNextMetricsFetch()
-      void fetchMetrics()
-      void fetchFpsHistory()
-    }, METRICS_POLL_INTERVAL_MS)
+      scheduleNextSnapshotFetch()
+      void fetchSnapshot()
+    }, SNAPSHOT_POLL_INTERVAL_MS)
 
     return () => {
       window.clearInterval(interval)
-      setNextMetricsFetchAt(null)
+      setNextSnapshotFetchAt(null)
     }
-  }, [config, fetchMetrics, fetchFpsHistory, isHydrated])
+  }, [config, fetchSnapshot, isHydrated])
 
   const value = useMemo<ServerContextType>(() => ({
     config,
@@ -511,8 +526,6 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     isConfigured: !!config,
     players,
     setPlayers,
-    refreshRate,
-    setRefreshRate,
     consoleLogs,
     addLog,
     clearLogs,
@@ -526,21 +539,20 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     settings,
     setSettings,
     fetchAllData,
+    fetchSnapshot,
     bannedPlayers,
     addBannedPlayer,
     removeBannedPlayer,
     connectionStatus,
     lastConnectionError,
-    nextMetricsFetchAt,
-    metricsPollIntervalMs: METRICS_POLL_INTERVAL_MS,
+    nextSnapshotFetchAt,
+    snapshotPollIntervalMs: SNAPSHOT_POLL_INTERVAL_MS,
   }), [
     config,
     setConfig,
     clearConfig,
     players,
     setPlayers,
-    refreshRate,
-    setRefreshRate,
     consoleLogs,
     addLog,
     clearLogs,
@@ -554,12 +566,13 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     settings,
     setSettings,
     fetchAllData,
+    fetchSnapshot,
     bannedPlayers,
     addBannedPlayer,
     removeBannedPlayer,
     connectionStatus,
     lastConnectionError,
-    nextMetricsFetchAt,
+    nextSnapshotFetchAt,
   ])
 
   if (!isHydrated) {

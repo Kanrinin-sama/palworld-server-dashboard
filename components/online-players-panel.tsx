@@ -1,13 +1,12 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useServer } from '@/lib/server-context'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { PlayerRoster } from '@/components/player-roster'
-import { getPlayerKey, normalizePlayersPayload } from '@/lib/palworld'
+import { getPlayerKey } from '@/lib/palworld'
 import { toast } from 'sonner'
 import {
   RefreshCwIcon,
@@ -18,73 +17,57 @@ import {
 import type { Player } from '@/lib/types'
 
 export function OnlinePlayersPanel() {
-  const { apiCall, players, setPlayers, refreshRate, setRefreshRate, isLoading, fetchAllData } = useServer()
+  // Roster data arrives via the FIXED 15s combined snapshot in server-context
+  // (owner order 2026-07-14: one call for metrics+players, no configurable
+  // poll rates) — this panel renders it and diffs updates for join/leave toasts.
+  const { players, isLoading, fetchAllData, fetchSnapshot, nextSnapshotFetchAt, snapshotPollIntervalMs } = useServer()
   const [search, setSearch] = useState('')
-  const [countdown, setCountdown] = useState(refreshRate)
+  const [countdown, setCountdown] = useState<number | null>(null)
   const previousPlayersRef = useRef<Player[]>(players)
-  const refreshRateRef = useRef(refreshRate)
 
-  useEffect(() => { refreshRateRef.current = refreshRate }, [refreshRate])
-
-  const fetchPlayers = useCallback(async (isManual = false) => {
-    try {
-      const payload = await apiCall<unknown>('players')
-      const newPlayers = normalizePlayersPayload(payload)
-      const prevPlayers = previousPlayersRef.current
-
-      if (prevPlayers.length > 0 || newPlayers.length > 0) {
-        const prevIds = new Set(prevPlayers.map(getPlayerKey))
-        const newIds = new Set(newPlayers.map(getPlayerKey))
-        const joined = newPlayers.filter((player) => !prevIds.has(getPlayerKey(player)))
-        const left = prevPlayers.filter((player) => !newIds.has(getPlayerKey(player)))
-
-        joined.forEach((player) => {
-          toast.success(`${player.name} joined the server`, {
-            icon: <UserIcon className="w-4 h-4 text-green-500" />,
-          })
-        })
-
-        left.forEach((player) => {
-          toast.info(`${player.name} left the server`, {
-            icon: <UserIcon className="w-4 h-4 text-yellow-500" />,
-          })
-        })
-      }
-
-      previousPlayersRef.current = newPlayers
-      setPlayers(newPlayers)
-    } catch {
-      // Error already logged in apiCall
-    }
-
-    if (!isManual) {
-      setCountdown(refreshRateRef.current)
-    }
-  }, [apiCall, setPlayers])
-
-  // Initial fetch on mount only - use a ref to ensure single execution
-  const hasInitializedRef = useRef(false)
+  // Join/leave toasts: diff every roster update against the previous one.
   useEffect(() => {
-    if (!hasInitializedRef.current) {
-      hasInitializedRef.current = true
-      fetchPlayers()
+    const prevPlayers = previousPlayersRef.current
+    if (prevPlayers === players) {
+      return
     }
-  }, [fetchPlayers])
 
-  // Restart interval when refreshRate changes (no immediate fetch)
+    if (prevPlayers.length > 0 || players.length > 0) {
+      const prevIds = new Set(prevPlayers.map(getPlayerKey))
+      const newIds = new Set(players.map(getPlayerKey))
+      const joined = players.filter((player) => !prevIds.has(getPlayerKey(player)))
+      const left = prevPlayers.filter((player) => !newIds.has(getPlayerKey(player)))
+
+      joined.forEach((player) => {
+        toast.success(`${player.name} joined the server`, {
+          icon: <UserIcon className="w-4 h-4 text-green-500" />,
+        })
+      })
+
+      left.forEach((player) => {
+        toast.info(`${player.name} left the server`, {
+          icon: <UserIcon className="w-4 h-4 text-yellow-500" />,
+        })
+      })
+    }
+
+    previousPlayersRef.current = players
+  }, [players])
+
+  // Countdown to the next snapshot tick (display only — the cadence is fixed).
   useEffect(() => {
-    const interval = setInterval(() => fetchPlayers(), refreshRate * 1000) // SECONDS (default 10s, floor 5s — owner 2026-07-13)
+    const tick = () => {
+      setCountdown(
+        nextSnapshotFetchAt != null
+          ? Math.max(0, Math.ceil((nextSnapshotFetchAt - Date.now()) / 1000))
+          : null
+      )
+    }
+
+    tick()
+    const interval = setInterval(tick, 1000)
     return () => clearInterval(interval)
-  }, [fetchPlayers, refreshRate])
-
-  // Countdown timer
-  useEffect(() => {
-    setCountdown(refreshRate)
-    const countdownInterval = setInterval(() => {
-      setCountdown(prev => (prev > 0 ? prev - 1 : refreshRate))
-    }, 1000)
-    return () => clearInterval(countdownInterval)
-  }, [refreshRate])
+  }, [nextSnapshotFetchAt])
 
   const formatCountdown = (seconds: number) => {
     const mins = Math.floor(seconds / 60)
@@ -93,8 +76,6 @@ export function OnlinePlayersPanel() {
   }
 
   const handleManualRefresh = () => {
-    setCountdown(refreshRate)
-    void fetchPlayers(true)
     void fetchAllData()
   }
 
@@ -115,41 +96,34 @@ export function OnlinePlayersPanel() {
             />
           </div>
 
+          {/* Fixed cadence indicator (owner 2026-07-14: rate selector removed) + manual refresh. */}
           <div className="flex items-center gap-2">
-            <Select value={refreshRate.toString()} onValueChange={(v) => setRefreshRate(parseInt(v, 10))}>
-              <SelectTrigger className="flex-1">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="5">5 sec</SelectItem>
-                <SelectItem value="10">10 sec</SelectItem>
-                <SelectItem value="15">15 sec</SelectItem>
-                <SelectItem value="60">60 sec</SelectItem>
-              </SelectContent>
-            </Select>
+            <div className="flex h-9 flex-1 items-center justify-center gap-2 text-xs text-muted-foreground bg-secondary/50 rounded-md px-3">
+              <ClockIcon className="w-3 h-3" />
+              <span>
+                Auto {Math.floor(snapshotPollIntervalMs / 1000)}s · next in{' '}
+                <span className="font-mono font-medium text-foreground">
+                  {countdown != null ? formatCountdown(countdown) : '–:––'}
+                </span>
+              </span>
+            </div>
             <Button
               variant="outline"
               size="icon"
               onClick={handleManualRefresh}
-              disabled={isLoading['players'] || isLoading['info'] || isLoading['metrics'] || isLoading['settings']}
+              disabled={isLoading['snapshot'] || isLoading['info'] || isLoading['settings']}
               className="h-9 w-9 border-border"
             >
-              {isLoading['players'] ? (
+              {isLoading['snapshot'] ? (
                 <Spinner className="w-4 h-4" />
               ) : (
                 <RefreshCwIcon className="w-4 h-4" />
               )}
             </Button>
           </div>
-
-          {/* Countdown Timer */}
-          <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground bg-secondary/50 rounded-md py-1.5 px-3">
-            <ClockIcon className="w-3 h-3" />
-            <span>Next refresh in <span className="font-mono font-medium text-foreground">{formatCountdown(countdown)}</span></span>
-          </div>
         </div>
 
-        <PlayerRoster search={search} onAfterAction={() => void fetchPlayers()} />
+        <PlayerRoster search={search} onAfterAction={() => void fetchSnapshot()} />
       </div>
     </aside>
   )

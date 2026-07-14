@@ -34,6 +34,11 @@ const FPS_HISTORY_WINDOW_MS = 1 * 60 * 60 * 1000 // owner 2026-07-13: 1h (was 4h
 // ring means the server (or sampler) was actually down — render it as a GAP,
 // never a fake bridging line across time nobody sampled.
 const FPS_GAP_BREAK_MS = 30_000
+const FPS_SAMPLE_NOMINAL_MS = 5_000 // sampler cadence — one sample ≈ 5s of wall time
+// Owner-ordered health tiles (2026-07-14), thresholds per the watch-signal doctrine:
+// median sliding off baseline = structural sag; longest continuous <45 stretch
+// growing past ~60-90s = dips becoming valleys; >10% of the hour under 30 = budget blown.
+const FPS_DIP_THRESHOLD = 45
 
 export function PanelSection({
   title,
@@ -576,6 +581,32 @@ function formatAxisAge(ms: number) {
   return `-${Number.isInteger(hours) ? hours.toFixed(0) : hours.toFixed(1)}h`
 }
 
+function formatDipDuration(ms: number) {
+  const totalSeconds = Math.round(ms / 1000)
+  if (totalSeconds < 60) return `${totalSeconds}s`
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`
+}
+
+function getDipDurationColorClass(ms: number | null) {
+  if (ms == null) return 'text-foreground'
+  if (ms === 0) return 'text-emerald-400'
+  if (ms <= 30_000) return 'text-lime-400' // normal sim-burst territory
+  if (ms <= 60_000) return 'text-yellow-400'
+  if (ms <= 90_000) return 'text-orange-400' // dips are becoming valleys
+  return 'text-red-500'
+}
+
+function getUnder30BudgetColorClass(pct: number | null) {
+  if (pct == null) return 'text-foreground'
+  if (pct <= 2) return 'text-emerald-400'
+  if (pct <= 5) return 'text-lime-400'
+  if (pct <= 10) return 'text-yellow-400'
+  if (pct <= 15) return 'text-orange-400' // budget blown past the 10% trip point
+  return 'text-red-500'
+}
+
 function FpsHistoryGraph({
   samples,
   currentFps,
@@ -653,6 +684,42 @@ function FpsHistoryGraph({
     [chartSamples]
   )
 
+  // Health-tile stats (owner order 2026-07-14) — the three watch signals,
+  // computed from the same 1h server-side ring the chart renders.
+  const medianFps = (() => {
+    if (fpsValues.length === 0) return null
+    const sorted = [...fpsValues].sort((a, b) => a - b)
+    const mid = Math.floor(sorted.length / 2)
+    return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
+  })()
+
+  // Longest continuous stretch below FPS_DIP_THRESHOLD, gap-aware: a dip
+  // cannot chain across a data hole (server/sampler downtime).
+  const longestDipMs = (() => {
+    if (orderedSamples.length === 0) return null
+    let worst = 0
+    let runStart: number | null = null
+    let previousTimestamp: number | null = null
+    for (const sample of orderedSamples) {
+      if (previousTimestamp != null && sample.timestamp - previousTimestamp > FPS_GAP_BREAK_MS) {
+        runStart = null
+      }
+      if (sample.fps < FPS_DIP_THRESHOLD) {
+        if (runStart == null) runStart = sample.timestamp
+        worst = Math.max(worst, sample.timestamp - runStart + FPS_SAMPLE_NOMINAL_MS)
+      } else {
+        runStart = null
+      }
+      previousTimestamp = sample.timestamp
+    }
+    return worst
+  })()
+
+  // Share of the visible window spent under 30fps (the burst budget).
+  const under30Pct = fpsValues.length > 0
+    ? (100 * fpsValues.filter((value) => value < 30).length) / fpsValues.length
+    : null
+
   // Segments split on real data holes (server/sampler downtime) so the chart
   // never draws an interpolated bridge across a gap in the ring.
   const pointSegments = React.useMemo(() => {
@@ -707,7 +774,7 @@ function FpsHistoryGraph({
         </div>
         <div className="flex items-center gap-3">
           <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-            Metrics · every {Math.floor(pollIntervalMs / 1000)}s
+            Refresh · every {Math.floor(pollIntervalMs / 1000)}s
           </span>
           <Badge variant="secondary" className="font-mono text-[10px] uppercase tracking-[0.2em]">
             1 Hour History
@@ -821,10 +888,37 @@ function FpsHistoryGraph({
             {avgFps != null ? avgFps.toFixed(1) : 'N/A'}
           </div>
         </div>
+        <div
+          className="rounded-lg border border-border/50 bg-secondary/35 px-3 py-2"
+          title="Structural health: the plateau the server actually runs at. If this slides off baseline, standing sim load has grown — that's the signal that matters."
+        >
+          <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Median</div>
+          <div className={cn('mt-1 font-mono text-sm', getFpsTextColorClass(medianFps))}>
+            {medianFps != null ? medianFps.toFixed(1) : 'N/A'}
+          </div>
+        </div>
         <div className="rounded-lg border border-border/50 bg-secondary/35 px-3 py-2">
           <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Max</div>
           <div className={cn('mt-1 font-mono text-sm', getFpsTextColorClass(maxFps))}>
             {maxFps != null ? maxFps.toFixed(1) : 'N/A'}
+          </div>
+        </div>
+        <div
+          className="rounded-lg border border-border/50 bg-secondary/35 px-3 py-2"
+          title="Longest continuous stretch below 45 FPS this hour (gap-aware). ~30s bursts are normal sim spikes; 60-90s+ valleys mean trouble."
+        >
+          <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Longest &lt;45</div>
+          <div className={cn('mt-1 font-mono text-sm', getDipDurationColorClass(longestDipMs))}>
+            {longestDipMs != null ? formatDipDuration(longestDipMs) : 'N/A'}
+          </div>
+        </div>
+        <div
+          className="rounded-lg border border-border/50 bg-secondary/35 px-3 py-2"
+          title="Share of the last hour spent below 30 FPS (the burst budget). Past ~10% players feel it."
+        >
+          <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Under 30</div>
+          <div className={cn('mt-1 font-mono text-sm', getUnder30BudgetColorClass(under30Pct))}>
+            {under30Pct != null ? `${under30Pct.toFixed(1)}%` : 'N/A'}
           </div>
         </div>
       </div>
@@ -844,7 +938,7 @@ function MetricTile({ label, value }: { label: string; value: string }) {
 export function MetricsCard() {
   // Player count sources from the roster (players.length) — the same truth the
   // roster panel renders — NOT metrics.currentplayernum (owner order 2026-07-10).
-  const { serverMetrics, fpsHistory, players, metricsPollIntervalMs } = useServer()
+  const { serverMetrics, fpsHistory, players, snapshotPollIntervalMs } = useServer()
 
   const uptime = serverMetrics
     ? (() => {
@@ -865,7 +959,7 @@ export function MetricsCard() {
       <FpsHistoryGraph
         samples={fpsHistory}
         currentFps={serverMetrics?.serverfps ?? null}
-        pollIntervalMs={metricsPollIntervalMs}
+        pollIntervalMs={snapshotPollIntervalMs}
       />
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
