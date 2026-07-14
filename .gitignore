@@ -12,6 +12,7 @@ next.user-config.*
 .env
 .env.*
 !.env.example
+!.env.production
 
 # Runtime state
 data/

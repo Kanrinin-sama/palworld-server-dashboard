@@ -73,7 +73,7 @@ export function DashboardHeader({ activeTab = 'dashboard', onTabChange, onPlayer
             <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
               <div className="flex min-w-0 items-baseline gap-2 font-mono">
                 <span className="truncate text-sm font-bold uppercase tracking-[0.14em] text-foreground">
-                  {serverInfo?.servername ?? 'Palworld Server'}
+                  {serverInfo?.servername ?? 'kanapals'}
                 </span>
                 {serverInfo?.version && (
                   <span className="shrink-0 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
