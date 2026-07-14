@@ -26,8 +26,10 @@ import type { Player } from '@/lib/types'
 // Poll cadence for the live chat/presence feed (mirrors palcon's terminal tail).
 const CHAT_POLL_INTERVAL_MS = 4 * 1000
 
-// Web sends announce as "Kanrinin: <msg>" so web + palcon look identical in-game.
-const CHAT_SENDER_PREFIX = 'Kanrinin: '
+// Announcements sent from the web are prefixed with a configurable label so
+// they read as coming from an operator in-game. Defaults to "[Admin] ".
+const CHAT_SENDER_PREFIX = process.env.NEXT_PUBLIC_CHAT_SENDER_PREFIX ?? '[Admin] '
+const CHAT_SENDER_LABEL = CHAT_SENDER_PREFIX.trim() || 'Admin'
 
 type ChatEvent = {
   type: 'chat' | 'join' | 'leave'
@@ -265,7 +267,7 @@ export function ChatPanel() {
         <Input
           value={input}
           onChange={(event) => setInput(event.target.value)}
-          placeholder="Message as Kanrinin…"
+          placeholder={`Message as ${CHAT_SENDER_LABEL}…`}
           disabled={sending}
           aria-label="Chat message"
           className="flex-1 font-mono text-xs"
