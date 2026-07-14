@@ -4,6 +4,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { classifyPassword } from '@/lib/access-tier'
 import { getAnnounceEchoes, recordAnnounceEcho } from '@/lib/announce-echo'
+import { DEMO_MODE } from '@/lib/demo-mode'
 import { clientIp, isLockedOut, recordFailure } from '@/lib/rate-limit'
 import { PALWORLD_PROXY_HEADERS } from '@/lib/palworld'
 
@@ -32,6 +33,18 @@ export async function GET(request: NextRequest) {
   if (cls === 'unknown') recordFailure(ip)
   if (cls !== 'admin') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
+  if (DEMO_MODE) {
+    return NextResponse.json({
+      events: [
+        { type: 'join', ts: new Date(Date.now() - 600_000).toISOString(), name: 'LamballLarry' },
+        { type: 'chat', ts: new Date(Date.now() - 420_000).toISOString(), name: 'CattivaCore', text: 'Demo server online.' },
+        { type: 'chat', ts: new Date(Date.now() - 120_000).toISOString(), name: 'SparkitOps', text: 'Try announce, kick, ban, and restart safely.' },
+        // Demo sends are echoed too, so the chat console feels alive.
+        ...getAnnounceEchoes(),
+      ],
+    })
   }
 
   let out = ''
@@ -89,6 +102,13 @@ export async function POST(request: NextRequest) {
   }
   if (!message || message.length > 1000) {
     return NextResponse.json({ error: 'Invalid message' }, { status: 400 })
+  }
+
+  if (DEMO_MODE) {
+    // Demo mode never contacts a real server — record the echo so the sent
+    // message still shows up in the feed.
+    recordAnnounceEcho(message)
+    return NextResponse.json({ success: true })
   }
 
   // Upstream target is PINNED server-side; the game admin password comes from

@@ -1,6 +1,7 @@
 'use client'
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { demoMetrics, demoPlayers, demoServerInfo, demoSettings, getDemoFpsHistory, isDemoConfig } from './demo'
 import { buildPalworldProxyHeaders, buildPalworldProxyPath, normalizePlayersPayload } from './palworld'
 import type { ServerConfig, Player, ConsoleLog, ServerInfo, ServerMetrics, BannedPlayer, FpsSample } from './types'
 
@@ -13,10 +14,13 @@ type ConnectionStatus = 'disconnected' | 'checking' | 'connected'
 const FPS_HISTORY_WINDOW_MS = 1 * 60 * 60 * 1000
 const FPS_HISTORY_MAX_SAMPLES = 720 // 1h at the sampler's 5s cadence
 
-// Owner order 2026-07-14: ONE combined snapshot request (metrics + players +
-// fps history) on a FIXED 15s cadence via /api/server-snapshot. No separate
-// metrics/roster polls, no user-configurable poll rates.
-const SNAPSHOT_POLL_INTERVAL_MS = 15 * 1000
+// ONE combined snapshot request (metrics + players + fps history) per tick via
+// /api/server-snapshot — no separate metrics/roster polls, no runtime-adjustable
+// poll rates. Deployments can tune the cadence at BUILD time via
+// NEXT_PUBLIC_SNAPSHOT_POLL_SECONDS (default 15, clamped 5-120).
+const parsedSnapshotPollSeconds = Number.parseInt(process.env.NEXT_PUBLIC_SNAPSHOT_POLL_SECONDS ?? '', 10)
+const SNAPSHOT_POLL_INTERVAL_MS =
+  (Number.isFinite(parsedSnapshotPollSeconds) ? Math.min(Math.max(parsedSnapshotPollSeconds, 5), 120) : 15) * 1000
 
 const LEGACY_FPS_HISTORY_STORAGE_KEY = 'fpsHistory'
 const LEGACY_REFRESH_RATE_STORAGE_KEY = 'refreshRateOnlinePlayers'
@@ -324,6 +328,11 @@ export function ServerProvider({ children }: { children: ReactNode }) {
       throw new Error('Server not configured')
     }
 
+    if (isDemoConfig(config)) {
+      addLog({ type: 'success', message: `${endpoint}: Demo response`, endpoint })
+      return ({ info: demoServerInfo, metrics: demoMetrics, players: demoPlayers, settings: demoSettings }[endpoint] ?? { ok: true }) as T
+    }
+
     setConnectionStatus((current) => (current === 'disconnected' ? 'checking' : current))
     setIsLoading(prev => ({ ...prev, [endpoint]: true }))
 
@@ -398,6 +407,15 @@ export function ServerProvider({ children }: { children: ReactNode }) {
   // a single request. The panel never polls those endpoints separately.
   const fetchSnapshot = useCallback(async () => {
     if (!config) {
+      return
+    }
+
+    if (isDemoConfig(config)) {
+      setServerMetrics(demoMetrics)
+      setPlayers(demoPlayers)
+      setFpsHistoryState(getDemoFpsHistory())
+      setConnectionStatus('connected')
+      setLastConnectionError(null)
       return
     }
 
@@ -476,6 +494,13 @@ export function ServerProvider({ children }: { children: ReactNode }) {
 
   const fetchAllData = useCallback(async () => {
     if (!config) {
+      return
+    }
+
+    if (isDemoConfig(config)) {
+      setServerInfo(demoServerInfo)
+      setSettings(demoSettings)
+      await fetchSnapshot()
       return
     }
 

@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
+import 'nextra-theme-docs/style.css'
 import './globals.css'
 import { AppProviders } from './providers'
 import { CircuitBackground } from '@/components/circuit-background'
@@ -16,9 +17,9 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'kanapals',
-  description: 'kanapals server dashboard — monitoring, moderation, and live ops.',
-  applicationName: 'kanapals',
+  title: 'Palworld Server Dashboard',
+  description: 'Browser-based dashboard for Palworld server monitoring, moderation, and live operations.',
+  applicationName: 'Palworld Server Dashboard',
   icons: {
     icon: [
       {
@@ -30,7 +31,7 @@ export const metadata: Metadata = {
         media: '(prefers-color-scheme: dark)',
       },
       {
-        url: '/kana-avatar.png',
+        url: '/icon.svg',
         type: 'image/svg+xml',
       },
     ],

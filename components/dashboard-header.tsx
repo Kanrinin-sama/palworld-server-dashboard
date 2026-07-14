@@ -12,7 +12,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { CheckIcon, CopyIcon, PaletteIcon, SettingsIcon } from 'lucide-react'
+import Link from 'next/link'
+import { BookOpenIcon, CheckIcon, CopyIcon, PaletteIcon, SettingsIcon } from 'lucide-react'
 import { PanelSettingsDialog } from '@/components/panel-settings-dialog'
 
 type DashboardTab = 'dashboard' | 'map'
@@ -72,7 +73,7 @@ export function DashboardHeader({ activeTab = 'dashboard', onTabChange, onPlayer
             <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
               <div className="flex min-w-0 items-baseline gap-2 font-mono">
                 <span className="truncate text-sm font-bold uppercase tracking-[0.14em] text-foreground">
-                  {serverInfo?.servername ?? 'kanapals'}
+                  {serverInfo?.servername ?? 'Palworld Server'}
                 </span>
                 {serverInfo?.version && (
                   <span className="shrink-0 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
@@ -127,6 +128,18 @@ export function DashboardHeader({ activeTab = 'dashboard', onTabChange, onPlayer
 
             {/* Right: theme, roster (<xl), disconnect */}
             <div className="flex w-full flex-wrap items-center gap-2 xl:w-auto xl:justify-self-end">
+              <Button
+                variant="outline"
+                size="sm"
+                asChild
+                className="h-8 flex-1 justify-center gap-2 font-mono text-[11px] uppercase tracking-[0.2em] sm:flex-none"
+              >
+                <Link href="/docs">
+                  <BookOpenIcon className="h-3.5 w-3.5" />
+                  Docs
+                </Link>
+              </Button>
+
               {config?.accessTier === 'admin' && (
                 <Button
                   variant="outline"

@@ -96,7 +96,7 @@ export function LoginTransition({ serverLabel, onComplete }: LoginTransitionProp
                   <div className="flex flex-col items-center gap-5 text-center">
                     <IdentityDisc
                       name="Grid Operator"
-                      designation="kanapals"
+                      designation="Palworld Admin"
                       id="CTRL-01"
                       accessLevel="admin"
                       status="active"

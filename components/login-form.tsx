@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { FieldGroup, Field, FieldLabel } from '@/components/ui/field'
 import { buildPalworldProxyHeaders, buildPalworldProxyPath } from '@/lib/palworld'
+import { demoConfig, DEMO_MODE } from '@/lib/demo'
 import { LOGIN_TRANSITION_SESSION_KEY } from '@/lib/session-keys'
 import { InfoPanel, StatusBar } from '@/components/status-bar'
 import { Terminal } from '@/components/terminal'
@@ -17,8 +18,8 @@ const SERVER_CONFIG_STORAGE_KEY = 'serverConfig'
 const VALIDATION_DEBOUNCE_MS = 500
 const VALIDATION_REQUEST_TIMEOUT_MS = 5_000
 
-// The panel is WAN-exposed behind perlica-edge and the proxy pins the upstream
-// REST target server-side (PALWORLD_REST_URL). These address values are kept
+// When the panel is exposed to the internet, the proxy pins the upstream REST
+// target server-side (PALWORLD_REST_URL). These address values are kept
 // only so the stored config stays well-formed and the header/context display
 // keeps working — the proxy ignores them and always talks to the pinned upstream.
 const PINNED_SERVER_IP = '127.0.0.1'
@@ -137,6 +138,7 @@ export function LoginForm() {
   const [adminPassword, setAdminPassword] = useState('')
   const [rememberMe, setRememberMe] = useState(true)
   const [isConnecting, setIsConnecting] = useState(false)
+  const [isDemoMode, setIsDemoMode] = useState(DEMO_MODE)
   const [error, setError] = useState('')
   const [validationState, setValidationState] = useState<ValidationState>('idle')
   const [validationMessage, setValidationMessage] = useState('')
@@ -196,13 +198,20 @@ export function LoginForm() {
     () => [
       { text: 'INITIALIZING ADMIN INTERFACE', type: 'system' as const },
       { text: 'LOADING SERVER LINK PROTOCOLS', type: 'output' as const },
-      { text: 'VERIFY KANAPALS REST ENDPOINT', type: 'output' as const },
+      { text: 'VERIFY PALWORLD REST ENDPOINT', type: 'output' as const },
       { text: 'LIVE VALIDATION MONITOR ARMED', type: 'system' as const },
       { text: 'AWAITING OPERATOR PASSWORD', type: 'input' as const },
       ...bootValidationLines,
     ],
     [bootValidationLines]
   )
+
+  useEffect(() => {
+    void fetch('/api/demo-mode', { cache: 'no-store' })
+      .then((response) => response.json() as Promise<{ enabled?: boolean }>)
+      .then((data) => setIsDemoMode(Boolean(data.enabled)))
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     const storedConfigRaw = localStorage.getItem(SERVER_CONFIG_STORAGE_KEY)
@@ -256,6 +265,13 @@ export function LoginForm() {
       adminPassword,
     }
 
+    if (isDemoMode) {
+      sessionStorage.setItem(LOGIN_TRANSITION_SESSION_KEY, '1')
+      setConfig(demoConfig, { rememberMe: false })
+      setIsConnecting(false)
+      return
+    }
+
     if (!normalizedConfig.adminPassword) {
       setError('Password is required')
       setIsConnecting(false)
@@ -290,7 +306,7 @@ export function LoginForm() {
           variant="info"
           leftContent={
             <>
-              <span>KANAPALS CONTROL GRID</span>
+              <span>PALWORLD CONTROL GRID</span>
               <span>AUTHENTICATION REQUIRED</span>
             </>
           }
@@ -307,7 +323,7 @@ export function LoginForm() {
           />
 
           <InfoPanel
-            title="kanapals Server Admin"
+            title="Palworld Server Admin"
             subtitle="REST Link Authentication"
             status="active"
             className="w-full border-border/60 bg-card/80"
@@ -316,12 +332,12 @@ export function LoginForm() {
               <div className="login-avatar-shell mx-auto">
                 <div className="login-avatar-ring avatar-circle" />
                 <div className="login-avatar-core avatar-circle overflow-hidden rounded-xl border border-primary/20 bg-primary/10">
-                  <img src="/kana-avatar.png" alt="Kana" className="login-avatar-image h-full w-full object-cover" />
+                  <img src="/login-mascot.jpg" alt="Pal mascot" className="login-avatar-image h-full w-full object-cover" />
                 </div>
                 <div className="login-avatar-spark" />
               </div>
               <p className="mt-4 max-w-md text-sm text-muted-foreground">
-                Enter your operator password to bring the control grid online.
+                {isDemoMode ? 'Demo mode is enabled. Launch the sample dashboard without a server password.' : 'Enter your operator password to bring the control grid online.'}
               </p>
             </div>
 
@@ -337,10 +353,11 @@ export function LoginForm() {
                         name="adminPassword"
                         type="password"
                         autoComplete="current-password"
-                        placeholder="Enter your password"
+                        placeholder={isDemoMode ? 'Not required in demo mode' : 'Enter your password'}
                         value={adminPassword}
                         onChange={(e) => setAdminPassword(e.target.value)}
-                        required
+                        required={!isDemoMode}
+                        disabled={isDemoMode}
                         className={`pl-10 ${inputValidationClass}`}
                       />
                     </div>
@@ -408,6 +425,8 @@ export function LoginForm() {
                       <Loader2Icon className="mr-2 h-4 w-4 animate-spin" />
                       Connecting...
                     </>
+                  ) : isDemoMode ? (
+                    'Launch Demo'
                   ) : (
                     'Connect to Server'
                   )}
