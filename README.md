@@ -1,3 +1,5 @@
+[![Publish Docker image](https://github.com/RNZ01/palworld-server-dashboard/actions/workflows/publish-docker-image.yml/badge.svg)](https://github.com/RNZ01/palworld-server-dashboard/actions/workflows/publish-docker-image.yml) 
+
 # Palworld Server Dashboard
 
 A self-hosted web dashboard for operating a Palworld dedicated server through the Palworld REST API.
