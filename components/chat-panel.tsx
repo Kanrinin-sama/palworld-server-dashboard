@@ -22,7 +22,7 @@ import {
 import { usePlayerActions } from '@/components/use-player-actions'
 import type { Player } from '@/lib/types'
 
-// Poll cadence for the live chat/presence feed (mirrors palcon's terminal tail).
+// Poll cadence for the live chat/presence feed.
 const CHAT_POLL_INTERVAL_MS = 4 * 1000
 
 // Announcements sent from the web are prefixed with a configurable label so
@@ -134,9 +134,8 @@ export function ChatPanel() {
   const { config, players } = useServer()
   const { setConfirmAction, confirmDialog } = usePlayerActions()
   const [events, setEvents] = useState<ChatEvent[]>([])
-  // Optimistic self-echo (owner UX request 2026-07-16): a sent message appears in the
-  // feed INSTANTLY instead of waiting up to one 4s poll for the server echo ring to
-  // surface it. Each entry is dropped as soon as a matching polled event arrives
+  // Optimistic self-echo: a sent message appears in the feed INSTANTLY instead of
+  // waiting up to one poll interval for the server echo ring to surface it. Each entry is dropped as soon as a matching polled event arrives
   // (count-based match on name|text so rapid duplicates survive), or after a 60s TTL.
   const [localEchoes, setLocalEchoes] = useState<Array<ChatEvent & { at: number }>>([])
   const [input, setInput] = useState('')
@@ -266,12 +265,12 @@ export function ChatPanel() {
     [sendMessage],
   )
 
-  // Auto-grow the composer (owner UX request 2026-07-16): the box wraps at viewport
-  // width and expands upward (the feed above is flex-1, so a taller composer pushes
-  // its top edge up) until a ~7-line cap, then scrolls internally. JS-driven so the
-  // behavior is identical on browsers without CSS field-sizing support. Messages stay
-  // single-line semantically — Enter sends, and pasted newlines are flattened — so
-  // the in-game rendering is unchanged.
+  // Auto-grow the composer: the box wraps at viewport width and expands upward (the
+  // feed above is flex-1, so a taller composer pushes its top edge up) until a
+  // ~7-line cap, then scrolls internally. JS-driven so the behavior is identical on
+  // browsers without CSS field-sizing support. Messages stay single-line
+  // semantically — Enter sends, pasted newlines are flattened — so the in-game
+  // rendering is unchanged.
   const composerRef = useRef<HTMLTextAreaElement | null>(null)
   const COMPOSER_MAX_PX = 160
   useEffect(() => {
@@ -334,8 +333,8 @@ export function ChatPanel() {
         </div>
       </div>
 
-      {/* Custom message sender — pinned at the bottom, mirrors palcon identity.
-          Auto-growing composer: wraps at width, expands upward to a cap (see effect above). */}
+      {/* Custom message sender — pinned at the bottom. Auto-growing composer:
+          wraps at width, expands upward to a cap (see effect above). */}
       <form onSubmit={handleSubmit} className="flex shrink-0 items-end gap-2">
         <Textarea
           ref={composerRef}

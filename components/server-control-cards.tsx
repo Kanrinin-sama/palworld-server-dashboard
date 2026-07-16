@@ -29,7 +29,7 @@ import {
   SearchIcon
 } from 'lucide-react'
 
-const FPS_HISTORY_WINDOW_MS = 1 * 60 * 60 * 1000 // owner 2026-07-13: 1h (was 4h) — keep in sync with lib/server-context.tsx
+const FPS_HISTORY_WINDOW_MS = 1 * 60 * 60 * 1000 // 1h (was 4h) — keep in sync with lib/server-context.tsx
 // History comes from the server-side sampler (5s cadence). A hole >30s in the
 // ring means the server (or sampler) was actually down — render it as a GAP,
 // never a fake bridging line across time nobody sampled.
@@ -581,7 +581,7 @@ function formatAxisAge(ms: number) {
   return `-${Number.isInteger(hours) ? hours.toFixed(0) : hours.toFixed(1)}h`
 }
 
-// ── General health verdict (owner order 2026-07-14) ─────────────────────────
+// ── General health verdict ─────────────────────────
 // One pill, one color, beside the live FPS. Composite 0-100 score: a weighted
 // blend of five signals (structural hour-median heaviest, a 10-min median for
 // recency), then VETO CAPS — any single critical signal alone clamps the
@@ -630,7 +630,7 @@ interface FpsHealthInput {
   hourMedian: number | null
   recentMedian: number | null
   /** Median over the last ~60s of samples. The "is it dying RIGHT NOW" signal:
-   *  a single burst-dip sample can't move it (owner fix 2026-07-14 — the
+   *  a single burst-dip sample can't move it (the
    *  instantaneous live-fps cap flashed Degraded for one tick on a 5s spike),
    *  but a genuinely crashing server drags it under threshold within ~30s. */
   lastMinuteMedian: number | null
@@ -685,7 +685,7 @@ function computeFpsHealth(input: FpsHealthInput): FpsHealthVerdict {
 
   // Veto caps: [description, cap, tripped]. The tightest tripped cap wins.
   // "Dying right now" uses the 1-MINUTE median, never a single live sample —
-  // one 5s burst dip must not flap the verdict (owner fix 2026-07-14).
+  // one 5s burst dip must not flap the verdict.
   const caps: Array<[string, number, boolean]> = [
     ['1-min median < 10', 35, input.lastMinuteMedian != null && input.lastMinuteMedian < 10],
     ['1-min median < 15', 40, input.lastMinuteMedian != null && input.lastMinuteMedian < 15],
@@ -827,7 +827,7 @@ function FpsHistoryGraph({
     [chartSamples]
   )
 
-  // Health-tile stats (owner order 2026-07-14) — the three watch signals,
+  // Health-tile stats — the three watch signals,
   // computed from the same 1h server-side ring the chart renders.
   const medianFps = medianOf(fpsValues)
 
@@ -858,7 +858,7 @@ function FpsHistoryGraph({
     ? (100 * fpsValues.filter((value) => value < 30).length) / fpsValues.length
     : null
 
-  // General health verdict (owner order 2026-07-14) — rendered beside the live FPS.
+  // General health verdict — rendered beside the live FPS.
   const recentMedianFps = (() => {
     const cutoff = now - HEALTH_RECENT_WINDOW_MS
     const recentFps = orderedSamples
@@ -942,10 +942,9 @@ function FpsHistoryGraph({
               {currentFps != null ? currentFps.toFixed(1) : 'N/A'}
             </span>
             <div className="flex flex-col items-start gap-1 pb-1">
-              {/* General health verdict (owner order 2026-07-14): blend + veto caps
+              {/* General health verdict: blend + veto caps
                   across all ring metrics — hover for the full breakdown. Sits
-                  stacked above the LIVE tag, right of the big number (owner
-                  placement order 2026-07-14). */}
+                  stacked above the LIVE tag, right of the big number. */}
               <div
                 className={cn(
                   'flex items-center gap-1.5 rounded-full border border-border/60 bg-secondary/35 px-2.5 py-0.5',
@@ -1125,7 +1124,7 @@ function MetricTile({ label, value }: { label: string; value: string }) {
 
 export function MetricsCard() {
   // Player count sources from the roster (players.length) — the same truth the
-  // roster panel renders — NOT metrics.currentplayernum (owner order 2026-07-10).
+  // roster panel renders — NOT metrics.currentplayernum.
   const { serverMetrics, fpsHistory, players, snapshotPollIntervalMs } = useServer()
 
   const uptime = serverMetrics

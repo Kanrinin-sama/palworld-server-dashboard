@@ -126,7 +126,7 @@ export function PlayerRoster({ search, onAfterAction, variant = 'sidebar', class
   const searchQuery = search.trim().toLowerCase()
   const bannedPlayerIds = useMemo(() => new Set(bannedPlayers.map((player) => player.steamId)), [bannedPlayers])
 
-  // Watchlist: operator-flagged players pinned to a top tier (owner order 2026-07-10).
+  // Watchlist: operator-flagged players pinned to a top tier.
   // Persisted by player key so it survives refreshes and re-joins.
   const [watchlist, setWatchlist] = useState<Set<string>>(() => {
     if (typeof window === 'undefined') return new Set()
@@ -158,7 +158,7 @@ export function PlayerRoster({ search, onAfterAction, variant = 'sidebar', class
     const scoped = variant === 'widget'
       ? base.filter((player) => !MOD_WIDGET_HIDDEN_USERIDS.has(player.userId))
       : base
-    // Default sort: alphabetical by display name (owner order 2026-07-10)
+    // Default sort: alphabetical by display name
     return [...scoped].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
   }, [players, searchQuery, variant])
 

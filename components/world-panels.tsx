@@ -24,7 +24,7 @@ function useOnlineUids() {
 
 // "Last seen" cell: online players show a live green state instead of a stale
 // relative time (the guild timestamp only advances on save events, so an online
-// player would read "6m ago" — owner UX call 2026-07-16). One column, one truth.
+// player would read "6m ago"). One column, one truth.
 function LastSeenCell({ online, lastSeen }: { online: boolean; lastSeen: string | null }) {
   if (online) {
     return (

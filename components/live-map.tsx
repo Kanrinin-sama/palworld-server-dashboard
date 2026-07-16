@@ -32,7 +32,7 @@ const MIN_ZOOM = 0
 const MAX_ZOOM = 10
 const MAP_SIZE_FALLBACK = 920
 const MAP_BASIS = 4096 // keep the transformed layer under common GPU texture limits; 8192+ zoom corrupts Chrome compositing
-const REFRESH_INTERVAL_MS = 5000 // owner 2026-07-13: sane default (1s rescinded — REST /players is game-thread-synchronized on PalServer, ~1.2pp tick cost per req/s, A/B-measured)
+const REFRESH_INTERVAL_MS = 5000 // REST /players is game-thread-synchronized on PalServer (~1.2pp tick cost per req/s, A/B-measured) — keep this modest
 
 interface PlayerMarkerGroup {
   id: string
@@ -132,10 +132,10 @@ interface LiveMapProps {
 export function LiveMap({ activeTab = 'map', onTabChange }: LiveMapProps) {
   const { config, connectionStatus, players, setPlayers } = useServer()
   const { world } = useWorld()
-  // gmaps-style view: top-left-origin transform, cursor-anchored wheel zoom, edge-clamped pan (owner spec 2026-07-10)
+  // gmaps-style view: top-left-origin transform, cursor-anchored wheel zoom, edge-clamped pan
   const [view, setView] = useState<{ scale: number; tx: number; ty: number } | null>(null)
   const [mousePosition, setMousePosition] = useState<[string, string]>(['0.00', '0.00'])
-  // Layer toggles persist across reloads (owner order 2026-07-10)
+  // Layer toggles persist across reloads
   const readLayer = (key: string, fallback: boolean) => {
     if (typeof window === 'undefined') return fallback
     const v = localStorage.getItem(`mapLayer.${key}`)
@@ -208,7 +208,7 @@ export function LiveMap({ activeTab = 'map', onTabChange }: LiveMapProps) {
         const pv = pendingViewRef.current
         if (!pv) return
         // Gesture frames bypass React entirely: write the transform straight to both
-        // layers on the compositor path ("make sure it's async" — owner 2026-07-10).
+        // layers on the compositor path, keeping gestures fully async.
         const tf = `translate(${pv.tx}px, ${pv.ty}px) scale(${pv.scale})`
         if (mapPlaneRef.current) mapPlaneRef.current.style.transform = tf
         const v0 = layoutViewRef.current
@@ -239,8 +239,8 @@ export function LiveMap({ activeTab = 'map', onTabChange }: LiveMapProps) {
     layoutViewRef.current = view
   }, [view])
 
-  // Screen-space marker math (owner spec: tags render at fixed rez in viewport space,
-  // never scaled — only the map zooms). ov = at-rest layout view; overlayTransform =
+  // Screen-space marker math: tags render at fixed resolution in viewport space,
+  // never scaled — only the map zooms. ov = at-rest layout view; overlayTransform =
   // transient gesture delta so tags track the map between React commits.
   const ov = view ?? {
     scale: fitScale,
@@ -763,7 +763,7 @@ export function LiveMap({ activeTab = 'map', onTabChange }: LiveMapProps) {
 
         {/* Marker overlay: parallel layer with identical transform — keeps the image
             layer's raster UNTOUCHED by periodic marker updates and zoom counter-scaling
-            (owner-diagnosed repaint storm, 2026-07-10) */}
+            (prevents a repaint storm) */}
         <div
           ref={markerPlaneRef}
           className="pointer-events-none absolute inset-0 will-change-transform"

@@ -1,6 +1,5 @@
 // SERVER-ONLY. In-memory ring of announcements sent FROM the panel, merged
-// into the /api/chat feed (owner order 2026-07-14: a message sent from the
-// panel must show up in the panel's own chat log).
+// into the /api/chat feed.
 //
 // Why an echo ring: Palworld's server journal logs announce calls WITHOUT
 // their content ("[LOG] REST accessed endpoint /v1/api/announce OK"), so a

@@ -240,7 +240,7 @@ export function LoginForm() {
 
     // LOCAL-only readiness (fixed 2026-07-10): previously this probed /info on
     // every keystroke, and each wrong-password probe hit the server-side
-    // brute-force limiter — so merely TYPING burned failures and locked users
+    // brute-force limiter — so merely TYPING consumed failures and locked users
     // out in ~1 attempt. No network here now; real auth happens on submit.
     if (normalizedConfig.adminPassword.length === 0) {
       setValidationState('idle')

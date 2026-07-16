@@ -18,8 +18,7 @@ import type { Player } from '@/lib/types'
 
 export function OnlinePlayersPanel() {
   // Roster data arrives via the FIXED 15s combined snapshot in server-context
-  // (owner order 2026-07-14: one call for metrics+players, no configurable
-  // poll rates) — this panel renders it and diffs updates for join/leave toasts.
+  // — this panel renders it and diffs updates for join/leave toasts.
   const { players, isLoading, fetchAllData, fetchSnapshot, nextSnapshotFetchAt, snapshotPollIntervalMs } = useServer()
   const [search, setSearch] = useState('')
   const [countdown, setCountdown] = useState<number | null>(null)
@@ -81,7 +80,7 @@ export function OnlinePlayersPanel() {
 
   return (
     <aside className="flex h-full w-80 min-h-0">
-      {/* Dechromed sidebar (owner order): InfoPanel container styling kept, no title/subtitle/icon rows —
+      {/* Dechromed sidebar: InfoPanel container styling kept, no title/subtitle/icon rows —
           starts straight at the search + refresh controls. Row rendering + actions live in the shared
           PlayerRoster (also used by the mod-tier widget). */}
       <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden rounded border border-border/50 bg-card/50 p-3 backdrop-blur-sm sm:p-4">
@@ -96,7 +95,7 @@ export function OnlinePlayersPanel() {
             />
           </div>
 
-          {/* Fixed cadence indicator (owner 2026-07-14: rate selector removed) + manual refresh. */}
+          {/* Fixed cadence indicator + manual refresh. */}
           <div className="flex items-center gap-2">
             <div className="flex h-9 flex-1 items-center justify-center gap-2 text-xs text-muted-foreground bg-secondary/50 rounded-md px-3">
               <ClockIcon className="w-3 h-3" />
