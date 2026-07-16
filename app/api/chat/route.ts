@@ -17,6 +17,7 @@ export const dynamic = 'force-dynamic'
 // journalctl and returns player messages, so mod/unknown are rejected like the proxy.
 // Requires Linux + systemd and the panel's OS user in the systemd-journal group.
 const SYSTEMD_UNIT = process.env.PALWORLD_SYSTEMD_UNIT ?? 'palworld'
+const DOCKER_CONTAINER = process.env.PALWORLD_DOCKER_CONTAINER
 const CHAT_RE = /^\[([^\]]+)\]\s+\[CHAT\]\s+(.*)$/
 const JOIN_RE = /^\[([^\]]+)\]\s+\[LOG\]\s+(.+?)\s+(?:[\d.:]+\s+)?(?:joined|connected) the server\./
 const LEAVE_RE = /^\[([^\]]+)\]\s+\[LOG\]\s+(.+?)\s+left the server\./
@@ -41,7 +42,6 @@ export async function GET(request: NextRequest) {
         { type: 'join', ts: new Date(Date.now() - 600_000).toISOString(), name: 'LamballLarry' },
         { type: 'chat', ts: new Date(Date.now() - 420_000).toISOString(), name: 'CattivaCore', text: 'Demo server online.' },
         { type: 'chat', ts: new Date(Date.now() - 120_000).toISOString(), name: 'SparkitOps', text: 'Try announce, kick, ban, and restart safely.' },
-        // Demo sends are echoed too, so the chat console feels alive.
         ...getAnnounceEchoes(),
       ],
     })
@@ -49,18 +49,21 @@ export async function GET(request: NextRequest) {
 
   let out = ''
   try {
-    const { stdout } = await run(
-      'journalctl',
-      ['-u', SYSTEMD_UNIT, '-o', 'cat', '--since', '-3h', '--no-pager'],
-      { maxBuffer: 8 * 1024 * 1024, timeout: 5000 },
-    )
-    out = stdout
+    const { stdout, stderr } = DOCKER_CONTAINER
+      ? await run('docker', ['logs', '--since', '3h', DOCKER_CONTAINER], { maxBuffer: 8 * 1024 * 1024, timeout: 5000 })
+      : await run(
+          'journalctl',
+          ['-u', SYSTEMD_UNIT, '-o', 'cat', '--since', '-3h', '--no-pager'],
+          { maxBuffer: 8 * 1024 * 1024, timeout: 5000 },
+        )
+    out = `${stdout}\n${stderr}`.replaceAll('\0', '')
   } catch {
     return NextResponse.json({ events: [] })
   }
 
   const events: ChatEvent[] = []
-  for (const line of out.split('\n')) {
+  for (const rawLine of out.split('\n')) {
+    const line = rawLine.trim()
     let m = CHAT_RE.exec(line)
     if (m) {
       const rest = m[2]!.trim()
@@ -73,25 +76,17 @@ export async function GET(request: NextRequest) {
     m = LEAVE_RE.exec(line)
     if (m) { events.push({ type: 'leave', ts: m[1]!, name: m[2]!.trim() }) }
   }
-  // Panel-sent announcements never appear in the journal (the server logs the
-  // announce call without its content), so merge in the server-side echo ring.
-  // The ts format is lexicographically sortable.
   const merged = [...events, ...getAnnounceEchoes()].sort((a, b) => a.ts.localeCompare(b.ts))
   return NextResponse.json({ events: merged.slice(-120) })
 }
 
-// Send a chat announcement AND echo it into the feed above. The panel sends
-// through here (not the generic /api/palworld proxy) so the echo is recorded
-// atomically with a successful send. ADMIN-tier only, like the rest of chat.
 export async function POST(request: NextRequest) {
   const ip = clientIp(request)
   if (isLockedOut(ip)) return NextResponse.json({ error: 'Too many attempts.' }, { status: 429 })
   const pw = request.headers.get(PALWORLD_PROXY_HEADERS.adminPassword) ?? ''
   const cls = classifyPassword(pw)
   if (cls === 'unknown') recordFailure(ip)
-  if (cls !== 'admin') {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-  }
+  if (cls !== 'admin') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   let message = ''
   try {
@@ -105,21 +100,17 @@ export async function POST(request: NextRequest) {
   }
 
   if (DEMO_MODE) {
-    // Demo mode never contacts a real server — record the echo so the sent
-    // message still shows up in the feed.
     recordAnnounceEcho(message)
     return NextResponse.json({ success: true })
   }
 
-  // Upstream target is PINNED server-side; the game admin password comes from
-  // env — same posture as the proxy and snapshot routes.
   const pinned = new URL(process.env.PALWORLD_REST_URL ?? 'http://127.0.0.1:8212')
   const gameAdminPassword =
     process.env.PALWORLD_ADMIN_PASSWORD ?? process.env.PALWORLD_REAL_ADMIN_PASSWORD ?? ''
   if (!gameAdminPassword) {
     return NextResponse.json(
       { error: 'Server proxy is not configured (missing PALWORLD_ADMIN_PASSWORD).' },
-      { status: 500 }
+      { status: 500 },
     )
   }
 
@@ -138,14 +129,14 @@ export async function POST(request: NextRequest) {
       const text = await response.text()
       return NextResponse.json(
         { error: `Server responded with ${response.status}: ${text}` },
-        { status: response.status }
+        { status: response.status },
       )
     }
   } catch (error) {
     console.error('Announce error:', error)
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to connect to server' },
-      { status: 500 }
+      { status: 500 },
     )
   }
 

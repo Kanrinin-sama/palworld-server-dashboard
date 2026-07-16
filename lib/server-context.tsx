@@ -1,7 +1,6 @@
 'use client'
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { demoMetrics, demoPlayers, demoServerInfo, demoSettings, getDemoFpsHistory, isDemoConfig } from './demo'
 import { buildPalworldProxyHeaders, buildPalworldProxyPath, normalizePlayersPayload } from './palworld'
 import type { ServerConfig, Player, ConsoleLog, ServerInfo, ServerMetrics, BannedPlayer, FpsSample } from './types'
 
@@ -328,11 +327,6 @@ export function ServerProvider({ children }: { children: ReactNode }) {
       throw new Error('Server not configured')
     }
 
-    if (isDemoConfig(config)) {
-      addLog({ type: 'success', message: `${endpoint}: Demo response`, endpoint })
-      return ({ info: demoServerInfo, metrics: demoMetrics, players: demoPlayers, settings: demoSettings }[endpoint] ?? { ok: true }) as T
-    }
-
     setConnectionStatus((current) => (current === 'disconnected' ? 'checking' : current))
     setIsLoading(prev => ({ ...prev, [endpoint]: true }))
 
@@ -410,15 +404,6 @@ export function ServerProvider({ children }: { children: ReactNode }) {
       return
     }
 
-    if (isDemoConfig(config)) {
-      setServerMetrics(demoMetrics)
-      setPlayers(demoPlayers)
-      setFpsHistoryState(getDemoFpsHistory())
-      setConnectionStatus('connected')
-      setLastConnectionError(null)
-      return
-    }
-
     setConnectionStatus((current) => (current === 'disconnected' ? 'checking' : current))
     setIsLoading(prev => ({ ...prev, snapshot: true }))
 
@@ -450,9 +435,6 @@ export function ServerProvider({ children }: { children: ReactNode }) {
         setFpsHistoryState(trimFpsHistory(payload.fpsHistory.samples))
       }
 
-      // Console-feed heartbeat (owner 2026-07-14: the per-poll success lines are
-      // a feature, not spam). Compact expandable summary — never the full
-      // multi-KB history payload.
       addLog({
         type: 'success',
         message: 'server-snapshot: Request successful',
@@ -494,13 +476,6 @@ export function ServerProvider({ children }: { children: ReactNode }) {
 
   const fetchAllData = useCallback(async () => {
     if (!config) {
-      return
-    }
-
-    if (isDemoConfig(config)) {
-      setServerInfo(demoServerInfo)
-      setSettings(demoSettings)
-      await fetchSnapshot()
       return
     }
 

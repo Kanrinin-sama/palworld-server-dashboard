@@ -6,7 +6,7 @@ import { readFile } from 'node:fs/promises'
 import type { FpsSample } from '@/lib/types'
 
 const HISTORY_FILE = process.env.PALWORLD_FPS_HISTORY_FILE ?? '/run/palworld-metrics/fps-history.json'
-export const FPS_RING_WINDOW_MS = 1 * 60 * 60 * 1000 // keep in sync with the sampler's windowMs
+const FPS_RING_WINDOW_MS = 1 * 60 * 60 * 1000 // keep in sync with the sampler's windowMs
 
 export interface FpsRingPayload {
   available: boolean
@@ -37,7 +37,7 @@ function sanitizeSamples(raw: unknown, now: number): FpsSample[] {
 
 export async function readFpsRing(): Promise<FpsRingPayload> {
   try {
-    const raw = await readFile(HISTORY_FILE, 'utf8')
+    const raw = await readFile(/* turbopackIgnore: true */ HISTORY_FILE, 'utf8')
     const parsed = JSON.parse(raw) as { updatedAt?: unknown; samples?: unknown }
     const now = Date.now()
 

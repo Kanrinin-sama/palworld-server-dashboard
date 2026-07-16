@@ -1,3 +1,5 @@
+[![Publish Docker image](https://github.com/RNZ01/palworld-server-dashboard/actions/workflows/publish-docker-image.yml/badge.svg)](https://github.com/RNZ01/palworld-server-dashboard/actions/workflows/publish-docker-image.yml) 
+
 # Palworld Server Dashboard
 
 A self-hosted web dashboard for operating a Palworld dedicated server through the Palworld REST API.
@@ -118,6 +120,12 @@ https://palworld-server-dashboard.vercel.app/docs/security
 The docs cover installation, configuration, authentication, moderator access, deployment, operations, troubleshooting, and development:
 
 https://palworld-server-dashboard.vercel.app/docs
+
+## Contributors
+
+<a href="https://github.com/SSCBryce" title="SSCBryce">
+  <img src="https://github.com/SSCBryce.png?size=80" width="80" height="80" alt="SSCBryce" />
+</a>
 
 ## License
 
